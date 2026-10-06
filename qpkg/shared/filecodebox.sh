@@ -3,17 +3,21 @@
 # 经 /etc/rcS.d/QS199FilesCodeBox(开机 start)/rcK.d(stop) 与 App Center 启停按钮调用。
 # 另含内部参数 __boot_start(setsid 后台引导用,勿手工调用)。
 QPKG_NAME="FilesCodeBox"
-QPKG_CONF="/etc/config/qpkg.conf"
+# FCB_QPKG_CONF/FCB_GETCFG/FCB_SETCFG 仅供测试注入 mock(QTS 运行环境不会设置)
+QPKG_CONF="${FCB_QPKG_CONF:-/etc/config/qpkg.conf}"
+GETCFG="${FCB_GETCFG:-/sbin/getcfg}"
+SETCFG="${FCB_SETCFG:-/sbin/setcfg}"
+DEF_SHARE="${FCB_DEF_SHARE_INFO:-/etc/config/def_share.info}"
 
 qpkg_root() {
-    _r=$(/sbin/getcfg "$QPKG_NAME" Install_Path -f "$QPKG_CONF" 2>/dev/null)
+    _r=$("$GETCFG" "$QPKG_NAME" Install_Path -f "$QPKG_CONF" 2>/dev/null)
     [ -n "$_r" ] || _r="/share/CACHEDEV1_DATA/.qpkg/${QPKG_NAME}"
     echo "$_r"
 }
 
 base_vol() {
     # 默认存储卷(数据放卷根而非 $QPKG_ROOT:卸载会整删安装目录,卷根数据保留)
-    _v=$(/sbin/getcfg SHARE_DEF defVolMP -f /etc/config/def_share.info 2>/dev/null)
+    _v=$("$GETCFG" SHARE_DEF defVolMP -f "$DEF_SHARE" 2>/dev/null)
     [ -n "$_v" ] || _v="/share/CACHEDEV1_DATA"
     echo "$_v"
 }
@@ -26,7 +30,7 @@ LOG_FILE="${APP_DIR}/filescodebox.log"
 
 find_docker() {
     # 优先 Container Station 自带 CLI(容器在 CS 界面可见可管理),逐级回退
-    _cs=$(/sbin/getcfg container-station Install_Path -f "$QPKG_CONF" 2>/dev/null)
+    _cs=$("$GETCFG" container-station Install_Path -f "$QPKG_CONF" 2>/dev/null)
     for c in "${_cs}/bin/docker" /usr/local/bin/docker /usr/local/bin/system-docker "${_cs}/bin/system-docker"; do
         [ -x "$c" ] && { echo "$c"; return 0; }
     done
@@ -36,7 +40,7 @@ find_docker() {
 find_compose() {
     # Container Station 附带的 compose wrapper(CS2/CS3 均存在)优先,
     # 其次独立 docker-compose,最后 docker CLI v2 的 compose 子命令
-    _cs=$(/sbin/getcfg container-station Install_Path -f "$QPKG_CONF" 2>/dev/null)
+    _cs=$("$GETCFG" container-station Install_Path -f "$QPKG_CONF" 2>/dev/null)
     for c in "${_cs}/bin/system-docker-compose" "${_cs}/bin/docker-compose" /usr/local/bin/docker-compose; do
         [ -x "$c" ] && { echo "$c"; return 0; }
     done
@@ -95,14 +99,14 @@ do_boot_start() {
 case "$1" in
     start)
         # App Center 停用状态不启动
-        if [ "$(/sbin/getcfg "$QPKG_NAME" Enable -u -d FALSE -f "$QPKG_CONF" 2>/dev/null)" != "TRUE" ]; then
+        if [ "$("$GETCFG" "$QPKG_NAME" Enable -u -d FALSE -f "$QPKG_CONF" 2>/dev/null)" != "TRUE" ]; then
             exit 0
         fi
         mkdir -p "$APP_DIR"
         # App Center 图标端口跟随 .env(用户改端口后"打开"链接仍正确)
-        _port=$(/bin/grep -E '^FCB_API_PORT=' "$ENV_FILE" 2>/dev/null | /bin/cut -d= -f2)
+        _port=$(grep -E '^FCB_API_PORT=' "$ENV_FILE" 2>/dev/null | cut -d= -f2)
         if [ -n "$_port" ]; then
-            /sbin/setcfg "$QPKG_NAME" "Web_Port" "$_port" -f "$QPKG_CONF" 2>/dev/null
+            "$SETCFG" "$QPKG_NAME" "Web_Port" "$_port" -f "$QPKG_CONF" 2>/dev/null
         fi
         # 开机时 Container Station 常比本 QPKG 晚就绪:setsid 后台引导,不阻塞 rcS
         # (App Center 会杀阻塞在启动流程里的进程组)

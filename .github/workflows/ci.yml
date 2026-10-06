@@ -13,9 +13,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
-        run: shellcheck qpkg/shared/filecodebox.sh
+        run: |
+          shellcheck qpkg/shared/filecodebox.sh
+          shellcheck tests/run-tests.sh
       - name: compose 模板校验
         run: docker compose -f qpkg/shared/compose.yml config -q
+
+  script-smoke:
+    # 服务脚本/安装钩子 mock 冒烟(伪造 getcfg/setcfg/docker/compose):start 后台
+    # 引导/图标端口同步/status/stop/remove/启停开关/.env 生成与升级对齐/卸载钩子。
+    # QTS 集成仍需真机。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: tests/run-tests.sh
 
   build:
     runs-on: ubuntu-latest

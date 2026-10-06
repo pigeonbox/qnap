@@ -1,5 +1,11 @@
 # QPKG 安装/升级/卸载钩子(由 qinstall.sh source;卸载三钩为字符串代码块,
-# 被嵌入生成的 .uninstall.sh 执行,引用不到本文件变量,必须写全字面量路径)
+# 被嵌入生成的 .uninstall.sh 执行,引用不到本文件变量——但本文件顶层的
+# 变量在 source 时即展开为字面量,故卸载钩里见到的已是具体路径)。
+
+# FCB_GETCFG/FCB_WRITE_LOG 仅供测试注入 mock(QTS 的 qinstall 运行环境不会设置)
+GETCFG="${FCB_GETCFG:-/sbin/getcfg}"
+WRITE_LOG="${FCB_WRITE_LOG:-/sbin/write_log}"
+DEF_SHARE="${FCB_DEF_SHARE_INFO:-/etc/config/def_share.info}"
 
 pkg_pre_install() {
     # 装完即启:qinstall.sh 按此变量决定安装完成后是否调用服务脚本 start
@@ -9,34 +15,34 @@ pkg_pre_install() {
 pkg_post_install() {
     # 构建机 uid 残留防护:QTS 以 root 执行服务脚本,包内文件统一归零
     # (构建 uid 若属 NAS 真实用户,可改写 root 执行的脚本,提权风险)
-    /bin/chown -R 0:0 "${SYS_QPKG_DIR}"
+    chown -R 0:0 "${SYS_QPKG_DIR}"
 
-    _base=$(/sbin/getcfg SHARE_DEF defVolMP -f /etc/config/def_share.info 2>/dev/null)
+    _base=$("$GETCFG" SHARE_DEF defVolMP -f "$DEF_SHARE" 2>/dev/null)
     [ -n "$_base" ] || _base="/share/CACHEDEV1_DATA"
     _appdir="${_base}/filescodebox"
     mkdir -p "${_appdir}/data"
     # 后端容器以 uid 1000 运行,bind 挂载目录属主必须匹配,否则库/密钥写不进
-    /bin/chown -R 1000:1000 "${_appdir}/data"
+    # (非 root/ACL 异常时不阻塞安装,README 提供自救命令)
+    chown -R 1000:1000 "${_appdir}/data" 2>/dev/null || true
 
     _env="${_appdir}/.env"
     if [ ! -f "$_env" ]; then
         {
-            /bin/grep -vE '^(FCB_API_PORT|FCB_DATA_DIR|FCB_IMAGE_TAG)=' "${SYS_QPKG_DIR}/shared/env.example"
+            grep -vE '^(FCB_API_PORT|FCB_DATA_DIR|FCB_IMAGE_TAG)=' "${SYS_QPKG_DIR}/shared/env.example"
             printf 'FCB_API_PORT=%s\n' "12345"
             printf 'FCB_DATA_DIR=%s\n' "${_appdir}/data"
         } > "$_env"
-        echo "FilesCodeBox 首次安装完成,数据目录: ${_appdir}" > /tmp/filescodebox-install-msg
     fi
     # 安装与升级统一对齐镜像版本(包版本即应用版本);其余 .env 项保持用户配置
     _imgtag="v$(echo "${QPKG_VER:-0.1.0}" | cut -d- -f1)"
-    /bin/grep -vE '^FCB_IMAGE_TAG=' "$_env" > "${_env}.tmp"
+    grep -vE '^FCB_IMAGE_TAG=' "$_env" > "${_env}.tmp"
     printf 'FCB_IMAGE_TAG=%s\n' "$_imgtag" >> "${_env}.tmp"
-    /bin/mv "${_env}.tmp" "$_env"
-    /bin/chmod 600 "$_env"
+    mv "${_env}.tmp" "$_env"
+    chmod 600 "$_env"
 
-    /sbin/write_log "FilesCodeBox ${QPKG_VER:-} installed; data at ${_appdir}" 4
+    "$WRITE_LOG" "FilesCodeBox ${QPKG_VER:-} installed; data at ${_appdir}" 4
 }
 
 PKG_PRE_REMOVE="{ ${SYS_QPKG_DIR}/shared/filecodebox.sh remove >/dev/null 2>&1 || true; }"
 PKG_MAIN_REMOVE="{ true; }"
-PKG_POST_REMOVE="{ /sbin/write_log \"FilesCodeBox uninstalled; data kept at <default volume>/filescodebox (delete manually if unwanted)\" 4; }"
+PKG_POST_REMOVE="{ ${WRITE_LOG} \"FilesCodeBox uninstalled; data kept at <default volume>/filescodebox (delete manually if unwanted)\" 4; }"
