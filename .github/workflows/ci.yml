@@ -1,0 +1,55 @@
+name: CI
+# 推送/PR:shellcheck 服务脚本 + QDK qbuild 真组包 + 产物结构断言。
+# (无 QTS 可用:不做安装冒烟;真机验证须用户在 App Center 手动安装,
+#  未签名包需先在 App Center → 设置 → General 允许无签名应用)
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck qpkg/shared/filecodebox.sh
+      - name: compose 模板校验
+        run: docker compose -f qpkg/shared/compose.yml config -q
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64, arm_64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 QDK(官方打包器)与依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dos2unix rsync
+          git clone --depth 1 https://github.com/qnap-dev/QDK.git /tmp/QDK
+          (cd /tmp/QDK && sudo ./InstallToUbuntu.sh install)
+      - name: qbuild 组包(CI 版本 0.0.0)
+        run: |
+          # 包内 cfg 断言(压缩段里 grep 不到,qbuild 成功本身就是 cfg 校验器)
+          grep -q 'QPKG_NAME="FilesCodeBox"' qpkg/qpkg.cfg
+          ./scripts/build-qpkg.sh ${{ matrix.arch }} 0.0.0
+      - name: 结构断言
+        run: |
+          QPKG=dist/FilesCodeBox_0.0.0_${{ matrix.arch }}.qpkg
+          test -s "$QPKG"
+          # 自解压脚本头(qbuild 产物形态:#!/bin/sh + control.tar + data.tar.gz + QDK 尾区)
+          [ "$(head -c 9 "$QPKG")" = "#!/bin/sh" ]
+          grep -q "control.tar" "$QPKG"
+          grep -q "data.tar.gz" "$QPKG"
+          # md5 侧车文件按最终路径可校验
+          test -f "${QPKG}.md5" && (cd dist && md5sum -c "$(basename "${QPKG}").md5")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qpkg-${{ matrix.arch }}
+          path: |
+            dist/*.qpkg
+            dist/*.md5
+          retention-days: 14
+          if-no-files-found: error
