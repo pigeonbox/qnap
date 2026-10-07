@@ -2,7 +2,7 @@ name: Release
 # 打 v* tag → 双架构 QPKG 发布(x86_64 / arm_64):
 #   1. build: QDK qbuild 组包
 #   2. release: 挂本仓 Release
-#   3. attach-to-hub: 回挂生态主仓 filescodebox/filescodebox(tag qnap-v*,
+#   3. attach-to-hub: 回挂生态主仓 pigeonbox/pigeonbox(tag qnap-v*,
 #      与 fnos-v*/openwrt-v* 同模式);跨仓写用 QNAP_PAT,未配置时本 job
 #      失败放行(continue-on-error),本地 `gh release upload` 兜底
 # workflow_dispatch: 传 version(现有 tag 名)对该版本手动重跑打包+双挂
@@ -68,7 +68,7 @@ jobs:
         run: |
           gh release view "${VER}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
             gh release create "${VER}" --repo "${GITHUB_REPOSITORY}" \
-              --title "FilesCodeBox QNAP QTS ${VER}" \
+              --title "PigeonBox QNAP QTS ${VER}" \
               --notes "威联通 QTS 5+ 应用包(QPKG,见 Assets,x86_64/arm_64 双架构)。要求:App Center 已安装 Container Station 3。安装:App Center 右上角手动安装 → 上传 QPKG;未签名包需先在 App Center → 设置允许安装无签名应用。详见 README。"
           gh release upload "${VER}" rel/*.qpkg rel/*.md5 --repo "${GITHUB_REPOSITORY}" --clobber
 
@@ -91,14 +91,14 @@ jobs:
           TAG: qnap-${{ inputs.version || github.ref_name }}
           VER: ${{ inputs.version || github.ref_name }}
         run: |
-          NOTES=$(printf '%s\n\n---\n🗂 **组件仓库**: [filescodebox/qnap](https://github.com/filescodebox/qnap) · **完整变更日志**: [%s](https://github.com/filescodebox/qnap/releases/tag/%s)\n🌐 **生态总览 / Latest**: [filescodebox/filescodebox](https://github.com/filescodebox/filescodebox/releases/latest)\n' \
+          NOTES=$(printf '%s\n\n---\n🗂 **组件仓库**: [pigeonbox/qnap](https://github.com/pigeonbox/qnap) · **完整变更日志**: [%s](https://github.com/pigeonbox/qnap/releases/tag/%s)\n🌐 **生态总览 / Latest**: [pigeonbox/pigeonbox](https://github.com/pigeonbox/pigeonbox/releases/latest)\n' \
             "威联通 QTS 5+ 应用包(QPKG,x86_64/arm_64,见 Assets)。安装说明见 qnap 仓 README。" "${VER}" "${VER}")
-          gh release view "${TAG}" --repo filescodebox/filescodebox >/dev/null 2>&1 || \
-            gh release create "${TAG}" --repo filescodebox/filescodebox \
-              --title "FilesCodeBox QNAP QTS ${VER}" \
+          gh release view "${TAG}" --repo pigeonbox/pigeonbox >/dev/null 2>&1 || \
+            gh release create "${TAG}" --repo pigeonbox/pigeonbox \
+              --title "PigeonBox QNAP QTS ${VER}" \
               --latest=false \
               --notes "${NOTES}"
-          gh release upload "${TAG}" rel/*.qpkg rel/*.md5 --repo filescodebox/filescodebox --clobber
+          gh release upload "${TAG}" rel/*.qpkg rel/*.md5 --repo pigeonbox/pigeonbox --clobber
           # 组件回挂恒不为 Latest(Latest 属于 hub 生态快照 v*);release 已存在时也兜底纠偏
-          gh release edit "${TAG}" --repo filescodebox/filescodebox --latest=false || true
-          echo "已回挂到 filescodebox/filescodebox Releases"
+          gh release edit "${TAG}" --repo pigeonbox/pigeonbox --latest=false || true
+          echo "已回挂到 pigeonbox/pigeonbox Releases"

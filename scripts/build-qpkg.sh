@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# 组装 FilesCodeBox 威联通 QPKG(依赖 QDK 官方打包器 qbuild)。
+# 组装 PigeonBox 威联通 QPKG(依赖 QDK 官方打包器 qbuild)。
 #
 # .qpkg 不是普通 tar:它是"自解压 shell 脚本 + control.tar + data.tar.gz(+QDK 尾区)"
 # 的自解压结构,必须用 qbuild 组包——纯 tar.gz 改名 .qpkg 不会被 App Center 安装。
 # QDK 安装(Ubuntu): git clone https://github.com/qnap-dev/QDK && cd QDK && sudo ./InstallToUbuntu.sh install
 #
 # 用法: ./scripts/build-qpkg.sh <arch> <版本>    arch ∈ x86_64 | arm_64
-#   例: ./scripts/build-qpkg.sh x86_64 0.1.0     → dist/FilesCodeBox_0.1.0_x86_64.qpkg(.md5)
+#   例: ./scripts/build-qpkg.sh x86_64 0.1.0     → dist/PigeonBox_0.1.0_x86_64.qpkg(.md5)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

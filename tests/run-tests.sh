@@ -87,7 +87,7 @@ mkdir -p "$CS/bin" "$PKGROOT/shared" "$VOL"
 cp "$TMP/docker" "$TMP/docker-compose" "$CS/bin/"
 cp qpkg/shared/compose.yml qpkg/shared/env.example "$PKGROOT/shared/"
 cat > "$TMP/qpkg.conf" <<EOF
-[FilesCodeBox]
+[PigeonBox]
 Enable=TRUE
 Install_Path=$PKGROOT
 [container-station]
@@ -99,7 +99,7 @@ defVolMP=$VOL
 EOF
 
 # 服务脚本公共环境(被脚本顶层读取,直接 export);mock 日志须导出——start 走后台引导子进程
-APP_DIR="$VOL/filescodebox"
+APP_DIR="$VOL/pigeonbox"
 export MOCK_LOG SETCFG_LOG FCB_QPKG_CONF="$TMP/qpkg.conf" FCB_GETCFG="$TMP/getcfg" \
     FCB_SETCFG="$TMP/setcfg" FCB_DEF_SHARE_INFO="$TMP/def_share.info"
 # 模拟 qinstall 安装序:pkg_post_install 先生成 .env,首次 start 在其之后
@@ -108,44 +108,44 @@ printf 'FCB_API_PORT=12345\nFCB_DATA_DIR=%s/data\n' "$APP_DIR" > "$APP_DIR/.env"
 
 echo "── Q1 start:启用状态 → 后台引导 compose up + 图标端口同步"
 : > "$MOCK_LOG"; : > "$SETCFG_LOG"
-sh qpkg/shared/filecodebox.sh start
+sh qpkg/shared/pigeonbox.sh start
 assert_eq "start 立即返回(不阻塞 rcS)" "$?" "0"
 i=0
 while [ $i -lt 30 ] && ! grep -q "started" "$MOCK_LOG" 2>/dev/null; do sleep 0.5; i=$((i + 1)); done
 assert_contains "compose wrapper up -d 已调用"  "$(cat "$MOCK_LOG")" "up -d"
-assert_contains "项目名固定 filescodebox"        "$(cat "$MOCK_LOG")" "-p filescodebox"
+assert_contains "项目名固定 pigeonbox"        "$(cat "$MOCK_LOG")" "-p pigeonbox"
 assert_contains "env-file 指向卷根 .env"        "$(cat "$MOCK_LOG")" "--env-file $APP_DIR/.env"
 assert_contains "-f 指向包内 compose.yml"       "$(cat "$MOCK_LOG")" "-f $PKGROOT/shared/compose.yml"
 assert_contains "setcfg 同步 Web_Port"          "$(cat "$SETCFG_LOG")" "Web_Port 12345"
 if [ -d "$APP_DIR" ]; then ok "应用目录已创建(data/ 由安装钩子建,Q5 验证)"; else fail "应用目录未创建"; fi
 
 echo "── Q2 status:docker ps 按固定容器名判活"
-sh qpkg/shared/filecodebox.sh status
+sh qpkg/shared/pigeonbox.sh status
 assert_eq "容器在跑 → 0" "$?" "0"
-MOCK_PS_EMPTY=1 sh qpkg/shared/filecodebox.sh status
+MOCK_PS_EMPTY=1 sh qpkg/shared/pigeonbox.sh status
 assert_eq "容器不在 → 3" "$?" "3"
 
 echo "── Q3 stop / remove:down 容忍失败"
 : > "$MOCK_LOG"
-sh qpkg/shared/filecodebox.sh stop
+sh qpkg/shared/pigeonbox.sh stop
 assert_eq "stop 退出码" "$?" "0"
 assert_contains "down --remove-orphans 已调用" "$(cat "$MOCK_LOG")" "down --remove-orphans"
-MOCK_COMPOSE_EXIT=1 sh qpkg/shared/filecodebox.sh stop
+MOCK_COMPOSE_EXIT=1 sh qpkg/shared/pigeonbox.sh stop
 assert_eq "compose 失败时 stop 仍为 0" "$?" "0"
 : > "$MOCK_LOG"
-sh qpkg/shared/filecodebox.sh remove
+sh qpkg/shared/pigeonbox.sh remove
 assert_eq "remove 退出码" "$?" "0"
 assert_contains "remove 走 down 清理容器" "$(cat "$MOCK_LOG")" "down --remove-orphans"
 
 echo "── Q4 start:停用状态不拉容器"
 : > "$MOCK_LOG"
 sed 's/^Enable=TRUE/Enable=FALSE/' "$TMP/qpkg.conf" > "$TMP/qpkg-disabled.conf"
-FCB_QPKG_CONF="$TMP/qpkg-disabled.conf" sh qpkg/shared/filecodebox.sh start
+FCB_QPKG_CONF="$TMP/qpkg-disabled.conf" sh qpkg/shared/pigeonbox.sh start
 sleep 2
 assert_not_contains "停用状态无 compose 调用" "$(cat "$MOCK_LOG")" "up -d"
 
 echo "── Q5 pkg_post_install:首次安装生成 .env"
-rm -rf "$VOL/filescodebox"
+rm -rf "$VOL/pigeonbox"
 export FCB_GETCFG="$TMP/getcfg" FCB_WRITE_LOG=true SYS_QPKG_DIR="$PKGROOT" QPKG_VER="0.1.0"
 # shellcheck disable=SC1091
 . qpkg/package_routines
@@ -166,8 +166,8 @@ assert_count   "IMAGE_TAG 恰好一行"      "$(cat "$APP_DIR/.env")" "^FCB_IMAG
 if [ ! -f "$APP_DIR/.env.tmp" ]; then ok "无 .tmp 残留"; else fail ".env.tmp 残留"; fi
 
 echo "── Q7 卸载钩子字符串按 source 时变量展开(具体路径)"
-cp qpkg/shared/filecodebox.sh "$PKGROOT/shared/filecodebox.sh"
-chmod +x "$PKGROOT/shared/filecodebox.sh"
+cp qpkg/shared/pigeonbox.sh "$PKGROOT/shared/pigeonbox.sh"
+chmod +x "$PKGROOT/shared/pigeonbox.sh"
 : > "$MOCK_LOG"
 eval "$PKG_PRE_REMOVE"
 assert_eq "PKG_PRE_REMOVE 执行退出码" "$?" "0"

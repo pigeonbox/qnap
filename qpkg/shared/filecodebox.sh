@@ -1,8 +1,8 @@
 #!/bin/sh
-# FilesCodeBox QPKG 服务脚本 —— qinstall.sh 安装时软链到 /etc/init.d/,
-# 经 /etc/rcS.d/QS199FilesCodeBox(开机 start)/rcK.d(stop) 与 App Center 启停按钮调用。
+# PigeonBox QPKG 服务脚本 —— qinstall.sh 安装时软链到 /etc/init.d/,
+# 经 /etc/rcS.d/QS199PigeonBox(开机 start)/rcK.d(stop) 与 App Center 启停按钮调用。
 # 另含内部参数 __boot_start(setsid 后台引导用,勿手工调用)。
-QPKG_NAME="FilesCodeBox"
+QPKG_NAME="PigeonBox"
 # FCB_QPKG_CONF/FCB_GETCFG/FCB_SETCFG 仅供测试注入 mock(QTS 运行环境不会设置)
 QPKG_CONF="${FCB_QPKG_CONF:-/etc/config/qpkg.conf}"
 GETCFG="${FCB_GETCFG:-/sbin/getcfg}"
@@ -24,9 +24,9 @@ base_vol() {
 
 QPKG_ROOT="$(qpkg_root)"
 COMPOSE_FILE="${QPKG_ROOT}/shared/compose.yml"
-APP_DIR="$(base_vol)/filescodebox"
+APP_DIR="$(base_vol)/pigeonbox"
 ENV_FILE="${APP_DIR}/.env"
-LOG_FILE="${APP_DIR}/filescodebox.log"
+LOG_FILE="${APP_DIR}/pigeonbox.log"
 
 find_docker() {
     # 优先 Container Station 自带 CLI(容器在 CS 界面可见可管理),逐级回退
@@ -60,10 +60,10 @@ compose_run() {
     case "$_c" in
         *" compose")
             _d="${_c% compose}"
-            "$_d" compose -p filescodebox --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+            "$_d" compose -p pigeonbox --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
             ;;
         *)
-            "$_c" -p filescodebox --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+            "$_c" -p pigeonbox --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
             ;;
     esac
 }
@@ -133,13 +133,13 @@ case "$1" in
         # 按固定容器名用 docker ps 判活,兼容 compose v1/v2 wrapper 差异
         # LSF 语义:0=运行中,3=未运行
         _d="$(find_docker)"
-        if [ -n "$_d" ] && [ -n "$("$_d" ps --filter 'name=filescodebox-server' --filter 'name=filescodebox-frontend' --filter 'status=running' -q 2>/dev/null)" ]; then
+        if [ -n "$_d" ] && [ -n "$("$_d" ps --filter 'name=pigeonbox-server' --filter 'name=pigeonbox-frontend' --filter 'status=running' -q 2>/dev/null)" ]; then
             exit 0
         fi
         exit 3
         ;;
     remove)
-        # 卸载:停并移除容器(不动镜像与数据;数据在卷根 filescodebox/ 目录)
+        # 卸载:停并移除容器(不动镜像与数据;数据在卷根 pigeonbox/ 目录)
         compose_run down --remove-orphans >/dev/null 2>&1 || true
         exit 0
         ;;

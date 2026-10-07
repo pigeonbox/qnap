@@ -19,7 +19,7 @@ pkg_post_install() {
 
     _base=$("$GETCFG" SHARE_DEF defVolMP -f "$DEF_SHARE" 2>/dev/null)
     [ -n "$_base" ] || _base="/share/CACHEDEV1_DATA"
-    _appdir="${_base}/filescodebox"
+    _appdir="${_base}/pigeonbox"
     mkdir -p "${_appdir}/data"
     # 后端容器以 uid 1000 运行,bind 挂载目录属主必须匹配,否则库/密钥写不进
     # (非 root/ACL 异常时不阻塞安装,README 提供自救命令)
@@ -40,9 +40,9 @@ pkg_post_install() {
     mv "${_env}.tmp" "$_env"
     chmod 600 "$_env"
 
-    "$WRITE_LOG" "FilesCodeBox ${QPKG_VER:-} installed; data at ${_appdir}" 4
+    "$WRITE_LOG" "PigeonBox ${QPKG_VER:-} installed; data at ${_appdir}" 4
 }
 
-PKG_PRE_REMOVE="{ ${SYS_QPKG_DIR}/shared/filecodebox.sh remove >/dev/null 2>&1 || true; }"
+PKG_PRE_REMOVE="{ ${SYS_QPKG_DIR}/shared/pigeonbox.sh remove >/dev/null 2>&1 || true; }"
 PKG_MAIN_REMOVE="{ true; }"
-PKG_POST_REMOVE="{ ${WRITE_LOG} \"FilesCodeBox uninstalled; data kept at <default volume>/filescodebox (delete manually if unwanted)\" 4; }"
+PKG_POST_REMOVE="{ ${WRITE_LOG} \"PigeonBox uninstalled; data kept at <default volume>/pigeonbox (delete manually if unwanted)\" 4; }"

@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: shellcheck
         run: |
-          shellcheck qpkg/shared/filecodebox.sh
+          shellcheck qpkg/shared/pigeonbox.sh
           shellcheck tests/run-tests.sh
       - name: compose 模板校验
         run: docker compose -f qpkg/shared/compose.yml config -q
@@ -22,7 +22,7 @@ jobs:
         # 模板真相源=hub 仓 deploy/nas/;模板一动未同步的仓全部变红
         run: |
           curl -fsSL --retry 3 --connect-timeout 15 \
-            https://raw.githubusercontent.com/filescodebox/filescodebox/main/deploy/nas/sync.sh -o /tmp/nas-sync.sh
+            https://raw.githubusercontent.com/pigeonbox/pigeonbox/main/deploy/nas/sync.sh -o /tmp/nas-sync.sh
           bash /tmp/nas-sync.sh check --platform qnap --dir .
 
   script-smoke:
@@ -50,11 +50,11 @@ jobs:
       - name: qbuild 组包(CI 版本 0.0.0)
         run: |
           # 包内 cfg 断言(压缩段里 grep 不到,qbuild 成功本身就是 cfg 校验器)
-          grep -q 'QPKG_NAME="FilesCodeBox"' qpkg/qpkg.cfg
+          grep -q 'QPKG_NAME="PigeonBox"' qpkg/qpkg.cfg
           ./scripts/build-qpkg.sh ${{ matrix.arch }} 0.0.0
       - name: 结构断言
         run: |
-          QPKG=dist/FilesCodeBox_0.0.0_${{ matrix.arch }}.qpkg
+          QPKG=dist/PigeonBox_0.0.0_${{ matrix.arch }}.qpkg
           test -s "$QPKG"
           # 自解压脚本头(qbuild 产物形态:#!/bin/sh + control.tar + data.tar.gz + QDK 尾区)
           [ "$(head -c 9 "$QPKG")" = "#!/bin/sh" ]
