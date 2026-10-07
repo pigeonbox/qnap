@@ -56,6 +56,7 @@ FilesCodeBox（文件快递柜，匿名口令分享文本/文件）的 **威联�
 
 ## 开发与构建
 
+共享资产（`compose.yml` / `env.example`）的**真相源在生态主仓 [`deploy/nas/`](https://github.com/filescodebox/filescodebox/tree/main/deploy/nas)**：改编排/默认值请改 hub 模板后执行 `bash deploy/nas/sync.sh sync`，**勿直接改本仓这两个文件**——CI 有「与 hub 模板对齐」漂移门禁，模板一动未同步的仓全部变红。跟随 server 新镜像版本走发版列车：hub 仓 `scripts/nas-release-train.sh <镜像tag> --push` 一条命令完成四处钉版+打 tag。
 仓库结构：`qpkg/`（qpkg.cfg / package_routines / shared 服务脚本+编排 / icons / arch 占位）+ `scripts/build-qpkg.sh`（QDK 官方 qbuild 组包）。
 
 ```sh
