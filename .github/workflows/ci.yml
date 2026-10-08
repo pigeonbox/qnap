@@ -25,7 +25,8 @@ jobs:
           if grep -qi 'container-station' qpkg/qpkg.cfg; then
             echo "::error::qpkg.cfg 仍声明 container-station 依赖(原生模式应无外部依赖)"; exit 1
           fi
-          if grep -qiE '\bdocker\b|compose' qpkg/shared/pigeonbox.sh; then
+          # 只查代码行(注释里的"Docker 化"等历史叙述不算引用)
+          if grep -v '^[[:space:]]*#' qpkg/shared/pigeonbox.sh | grep -qiE '\bdocker\b|compose'; then
             echo "::error::服务脚本仍引用 docker/compose"; exit 1
           fi
           if [ -e qpkg/shared/compose.yml ]; then
