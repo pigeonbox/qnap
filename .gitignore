@@ -1,5 +1,15 @@
+# 构建产物
 dist/
 build/
-*.spk
 *.qpkg
+*.md5
 *.tgz
+
+# 原生打包产物(build-native.sh 生成,gitignored;QDK 组包前必须先跑)
+qpkg/x86_64/bin/
+qpkg/arm_64/bin/
+qpkg/shared/www/
+
+# Go
+/pigeonbox
+.DS_Store

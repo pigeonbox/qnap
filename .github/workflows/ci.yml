@@ -1,5 +1,6 @@
 name: CI
-# 推送/PR:shellcheck 服务脚本 + QDK qbuild 真组包 + 产物结构断言。
+# 推送/PR:shellcheck + 原生形态守卫 + 脚本 mock 冒烟 + Go 单测 + 原生产物构建
+# (双架构二进制+前端)+ 真二进制运行冒烟 + QDK qbuild 真组包 + payload 结构断言。
 # (无 QTS 可用:不做安装冒烟;真机验证须用户在 App Center 手动安装,
 #  未签名包需先在 App Center → 设置 → General 允许无签名应用)
 on:
@@ -17,33 +18,108 @@ jobs:
       - uses: actions/checkout@v4
       - name: shellcheck
         run: |
-          shellcheck qpkg/shared/pigeonbox.sh
-          shellcheck tests/run-tests.sh
-      - name: compose 模板校验
-        run: docker compose -f qpkg/shared/compose.yml config -q
-      - name: 共享资产与 hub 模板对齐(漂移门禁)
-        # 模板真相源=hub 仓 deploy/nas/;模板一动未同步的仓全部变红
+          shellcheck qpkg/shared/pigeonbox.sh tests/run-tests.sh \
+            scripts/build-native.sh scripts/build-qpkg.sh
+      - name: 原生形态守卫(不得回退 Docker/compose 面)
         run: |
-          curl -fsSL --retry 3 --connect-timeout 15 \
-            https://raw.githubusercontent.com/pigeonbox/pigeonbox/main/deploy/nas/sync.sh -o /tmp/nas-sync.sh
-          bash /tmp/nas-sync.sh check --platform qnap --dir .
+          if grep -qi 'container-station' qpkg/qpkg.cfg; then
+            echo "::error::qpkg.cfg 仍声明 container-station 依赖(原生模式应无外部依赖)"; exit 1
+          fi
+          if grep -qiE '\bdocker\b|compose' qpkg/shared/pigeonbox.sh; then
+            echo "::error::服务脚本仍引用 docker/compose"; exit 1
+          fi
+          if [ -e qpkg/shared/compose.yml ]; then
+            echo "::error::compose.yml 应已删除(原生模式无编排文件)"; exit 1
+          fi
+      - name: 服务脚本/安装钩子 mock 冒烟
+        run: tests/run-tests.sh
 
-  script-smoke:
-    # 服务脚本/安装钩子 mock 冒烟(伪造 getcfg/setcfg/docker/compose):start 后台
-    # 引导/图标端口同步/status/stop/remove/启停开关/.env 生成与升级对齐/卸载钩子。
-    # QTS 集成仍需真机。
+  go-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: tests/run-tests.sh
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: go.sum
+      - run: go test -race ./...
 
-  build:
+  payload:
+    # 原生产物一次构建(双架构静态二进制 + 前端 www),供运行冒烟与组包共用
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 读依赖钉版(DEPS.env,真相源=hub release/train.yaml)
+        run: grep -E '^FRONTEND_REF=' DEPS.env >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 构建双架构二进制 + 前端(GOWORK 无涉:单仓 checkout)
+        env:
+          VERSION: 0.0.0-ci
+          COMMIT: ci
+        run: ./scripts/build-native.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: payload
+          path: qpkg/
+          retention-days: 7
+          if-no-files-found: error
+
+  native-smoke:
+    # 真二进制运行冒烟(runner 原生跑 amd64):起服务 → /ping + SPA 首页 + admin 登录
+    needs: payload
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: payload
+          path: qpkg/
+      - name: 起服务并断言(端口/首页/登录)
+        run: |
+          install -m 755 qpkg/x86_64/bin/pigeonbox-linux-amd64 /tmp/pigeonbox
+          APP=$(mktemp -d)
+          printf 'PB_SERVER_PORT=18321\nPB_ADMIN_PASSWORD="ci-smoke-pass-1"\n' > "$APP/.env"
+          set -a
+          # shellcheck disable=SC1091
+          . "$APP/.env"
+          set +a
+          PB_APP_HOME="$APP" PB_DATA_PATH="$APP/data" PB_DATABASE_DB_NAME="$APP/data/fileCodeBox.db" \
+            PB_STORAGE_PATH="$APP/data/uploads" PB_SERVER_HOST=127.0.0.1 \
+            /tmp/pigeonbox --static "$PWD/qpkg/shared/www" > "$APP/log" 2>&1 &
+          PID=$!
+          ok=""
+          for i in $(seq 1 30); do
+            curl -s -m 2 http://127.0.0.1:18321/ping 2>/dev/null | grep -q pong && { ok=1; break; }
+            sleep 1
+          done
+          if [ -z "$ok" ]; then echo "::error::/ping 30s 未就绪"; tail -50 "$APP/log"; kill $PID; exit 1; fi
+          echo "✓ /ping"
+          curl -s http://127.0.0.1:18321/ | grep -q 'id="app"' || { echo "::error::SPA 首页异常"; kill $PID; exit 1; }
+          echo "✓ SPA 首页"
+          curl -s -X POST http://127.0.0.1:18321/admin/login -H 'Content-Type: application/json' \
+            -d '{"username":"admin","password":"ci-smoke-pass-1"}' | grep -q '"code":200' \
+            || { echo "::error::admin 登录失败"; kill $PID; exit 1; }
+          echo "✓ admin 登录"
+          kill $PID
+
+  package:
+    needs: payload
     runs-on: ubuntu-latest
     strategy:
       matrix:
         arch: [x86_64, arm_64]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: payload
+          path: qpkg/
       - name: 安装 QDK(官方打包器)与依赖
         run: |
           sudo apt-get update -qq
@@ -55,7 +131,7 @@ jobs:
           # 包内 cfg 断言(压缩段里 grep 不到,qbuild 成功本身就是 cfg 校验器)
           grep -q 'QPKG_NAME="PigeonBox"' qpkg/qpkg.cfg
           ./scripts/build-qpkg.sh ${{ matrix.arch }} 0.0.0
-      - name: 结构断言
+      - name: 结构断言(自解压头/payload 关键文件/图标/md5 侧车)
         run: |
           QPKG=dist/PigeonBox_0.0.0_${{ matrix.arch }}.qpkg
           test -s "$QPKG"
@@ -65,6 +141,16 @@ jobs:
           grep -q "data.tar.gz" "$QPKG"
           # md5 侧车文件按最终路径可校验
           test -f "${QPKG}.md5" && (cd dist && md5sum -c "$(basename "${QPKG}").md5")
+          # payload 抽取(桩内 data 段偏移=script_len+control 段大小):
+          # 二进制/前端/服务脚本/env 模板/图标须在包根(QDK shared 平铺布局)
+          SLEN=$(grep -aoE '^script_len=[0-9]+' "$QPKG" | head -1 | cut -d= -f2)
+          CTL=$(grep -aoE 'script_len \+ [0-9]+' "$QPKG" | head -1 | grep -oE '[0-9]+$')
+          dd if="$QPKG" bs=$((SLEN + CTL)) skip=1 of=/tmp/data.tar.gz
+          tar -tzf /tmp/data.tar.gz | grep -q 'bin/pigeonbox-linux-'
+          tar -tzf /tmp/data.tar.gz | grep -q '^\./www/index\.html$'
+          tar -tzf /tmp/data.tar.gz | grep -q '^\./pigeonbox\.sh$'
+          tar -tzf /tmp/data.tar.gz | grep -q '^\./env\.example$'
+          tar -tzf /tmp/data.tar.gz | grep -q '^\./\.qpkg_icon\.gif$'
       - uses: actions/upload-artifact@v4
         with:
           name: qpkg-${{ matrix.arch }}

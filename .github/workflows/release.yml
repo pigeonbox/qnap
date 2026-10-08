@@ -1,8 +1,9 @@
 name: Release
 # 打 v* tag → 双架构 QPKG 发布(x86_64 / arm_64):
-#   1. build: QDK qbuild 组包
-#   2. release: 挂本仓 Release
-#   3. attach-to-hub: 回挂生态主仓 pigeonbox/pigeonbox(tag qnap-v*,
+#   1. payload: 双架构静态二进制 + 前端 www(原生进程模式,免 Container Station)
+#   2. package: QDK qbuild 组包 + 结构断言
+#   3. release: 挂本仓 Release
+#   4. attach-to-hub: 回挂生态主仓 pigeonbox/pigeonbox(tag qnap-v*,
 #      与 fnos-v*/openwrt-v* 同模式);跨仓写用 QNAP_PAT
 #      断链必须响(2026-10-08 拔除 continue-on-error——静默放行只会让 hub 统一出口缺资产)
 # workflow_dispatch: 传 version(现有 tag 名)对该版本手动重跑打包+双挂
@@ -12,12 +13,49 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '目标版本(现有 tag 名,如 v0.1.0)。仅重跑 QPKG 打包+双挂'
+        description: '目标版本(现有 tag 名,如 v1.14.4)。仅重跑 QPKG 打包+双挂'
         required: true
         type: string
 
 jobs:
-  build:
+  payload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 手动 dispatch 时按输入版本检出对应 tag,产物与 tag 严格一致
+          ref: ${{ inputs.version || github.ref_name }}
+      - name: 版本一致性断言(VERSION 与 tag 对齐;VERSION 为列车真相源)
+        run: |
+          VER=${{ inputs.version || github.ref_name }}
+          if [ -f VERSION ]; then
+            [ "$(cat VERSION)" = "${VER#v}" ] || { echo "::error::VERSION=$(cat VERSION) ≠ tag $VER——发版走 hub 列车 bump,勿手改 VERSION"; exit 1; }
+          fi
+      - name: 读依赖钉版(DEPS.env;前列车 tag 无此文件时回退 main)
+        run: |
+          if [ -f DEPS.env ]; then grep -E '^FRONTEND_REF=' DEPS.env >> "$GITHUB_ENV"
+          else echo "::warning::无 DEPS.env(前列车 tag),FRONTEND_REF 回退 main"; echo "FRONTEND_REF=main" >> "$GITHUB_ENV"; fi
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 原生产物构建(双架构二进制+前端,版本注入)
+        env:
+          VERSION: ${{ inputs.version || github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: ./scripts/build-native.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: payload
+          path: qpkg/
+          retention-days: 7
+          if-no-files-found: error
+
+  package:
+    needs: payload
     strategy:
       matrix:
         arch: [x86_64, arm_64]
@@ -25,18 +63,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # 手动 dispatch 时按输入版本检出对应 tag,产物与 tag 严格一致
           ref: ${{ inputs.version || github.ref_name }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: payload
+          path: qpkg/
       - name: 安装 QDK(官方打包器)与依赖
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq dos2unix rsync
           git clone --depth 1 https://github.com/qnap-dev/QDK.git /tmp/QDK
           (cd /tmp/QDK && sudo ./InstallToUbuntu.sh install)
-      - name: qbuild 组包(tag v0.1.0 → QPKG_VER 0.1.0)
+      - name: qbuild 组包(tag v1.14.4 → QPKG_VER 1.14.4)
         run: |
           VER="${{ inputs.version || github.ref_name }}"
           ./scripts/build-qpkg.sh ${{ matrix.arch }} "${VER#v}"
+      - name: 结构断言(自解压头/payload 关键文件/图标/md5 侧车)
+        run: |
+          VER="${{ inputs.version || github.ref_name }}"
+          QPKG=dist/PigeonBox_${VER#v}_${{ matrix.arch }}.qpkg
+          test -s "$QPKG"
+          [ "$(head -c 9 "$QPKG")" = "#!/bin/sh" ]
+          grep -q "control.tar" "$QPKG" && grep -q "data.tar.gz" "$QPKG"
+          test -f "${QPKG}.md5" && (cd dist && md5sum -c "$(basename "${QPKG}").md5")
+          # payload 抽取(桩内 data 段偏移=script_len+control 段大小):
+          # 二进制/前端/服务脚本/env 模板/图标须在包根(QDK shared 平铺布局)
+          SLEN=$(grep -aoE '^script_len=[0-9]+' "$QPKG" | head -1 | cut -d= -f2)
+          CTL=$(grep -aoE 'script_len \+ [0-9]+' "$QPKG" | head -1 | grep -oE '[0-9]+$')
+          dd if="$QPKG" bs=$((SLEN + CTL)) skip=1 of=/tmp/data.tar.gz
+          tar -tzf /tmp/data.tar.gz | grep -q 'bin/pigeonbox-linux-'
+          tar -tzf /tmp/data.tar.gz | grep -q '^\./www/index\.html$'
+          tar -tzf /tmp/data.tar.gz | grep -q '^\./pigeonbox\.sh$'
+          tar -tzf /tmp/data.tar.gz | grep -q '^\./env\.example$'
+          tar -tzf /tmp/data.tar.gz | grep -q '^\./\.qpkg_icon\.gif$'
       - uses: actions/upload-artifact@v4
         with:
           name: qpkg-${{ matrix.arch }}
@@ -48,7 +107,7 @@ jobs:
 
   release:
     if: github.event_name == 'push'
-    needs: build
+    needs: package
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -69,11 +128,11 @@ jobs:
           gh release view "${VER}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
             gh release create "${VER}" --repo "${GITHUB_REPOSITORY}" \
               --title "PigeonBox QNAP QTS ${VER}" \
-              --notes "威联通 QTS 5+ 应用包(QPKG,见 Assets,x86_64/arm_64 双架构)。要求:App Center 已安装 Container Station 3。安装:App Center 右上角手动安装 → 上传 QPKG;未签名包需先在 App Center → 设置允许安装无签名应用。详见 README。"
+              --notes "威联通 QTS 原生应用包(QPKG,见 Assets,x86_64/arm_64 双架构)。原生进程模式:包内自带二进制与前端,免 Container Station/免 Docker(要求 QTS 4.5+)。安装:App Center 右上角手动安装 → 上传 QPKG;未签名包需先在 App Center → 设置允许安装无签名应用。详见 README。"
           gh release upload "${VER}" rel/*.qpkg rel/*.md5 --repo "${GITHUB_REPOSITORY}" --clobber
 
   attach-to-hub:
-    needs: build
+    needs: package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -91,7 +150,7 @@ jobs:
           VER: ${{ inputs.version || github.ref_name }}
         run: |
           NOTES=$(printf '%s\n\n---\n🗂 **组件仓库**: [pigeonbox/qnap](https://github.com/pigeonbox/qnap) · **完整变更日志**: [%s](https://github.com/pigeonbox/qnap/releases/tag/%s)\n🌐 **生态总览 / Latest**: [pigeonbox/pigeonbox](https://github.com/pigeonbox/pigeonbox/releases/latest)\n' \
-            "威联通 QTS 5+ 应用包(QPKG,x86_64/arm_64,见 Assets)。安装说明见 qnap 仓 README。" "${VER}" "${VER}")
+            "威联通 QTS 原生应用包(QPKG,x86_64/arm_64,免 Container Station,要求 QTS 4.5+)。安装说明见 qnap 仓 README。" "${VER}" "${VER}")
           gh release view "${TAG}" --repo pigeonbox/pigeonbox >/dev/null 2>&1 || \
             gh release create "${TAG}" --repo pigeonbox/pigeonbox \
               --title "PigeonBox QNAP QTS ${VER}" \

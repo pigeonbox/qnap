@@ -1,8 +1,8 @@
 #!/bin/sh
 # QPKG 服务脚本与安装钩子 mock 冒烟测试(本地与 CI 同一套,无外部依赖):
-#   伪造 getcfg/setcfg/docker/compose-wrapper 与卷路径,验证 start(后台引导/
-#   图标端口同步)/status/stop/remove/启用开关与 package_routines 的 .env
-#   生成、升级镜像版本对齐、卸载钩子字符串展开。
+#   伪造 getcfg/setcfg 与假二进制,验证原生生命周期:start(后台引导/图标端口
+#   同步/健康等待)/status/stop(幂等)/remove/启用开关/package_routines 的
+#   .env 生成与 Docker 遗留清理/卸载钩子字符串展开/看门狗自愈(崩溃拉起+无响应重启)。
 # 用法: tests/run-tests.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -29,12 +29,20 @@ assert_count() {
     n=$(printf '%s\n' "$2" | grep -c "$3" 2>/dev/null || true)
     if [ "${n:-0}" -eq 1 ]; then ok "$1"; else fail "$1 (期望恰好 1 行 [$3],实际 ${n:-0} 行)"; fi
 }
+wait_for() { # <超时秒> <文件> <grep 模式>
+    _i=0
+    while [ "$_i" -lt "$1" ]; do
+        grep -q "$3" "$2" 2>/dev/null && return 0
+        sleep 0.5
+        _i=$((_i + 1))
+    done
+    return 1
+}
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-MOCK_LOG="$TMP/mock.log"      # docker/compose 调用记录
-SETCFG_LOG="$TMP/setcfg.log"  # setcfg 调用记录
+SETCFG_LOG="$TMP/setcfg.log" # setcfg 调用记录
 
 # ── mock getcfg:解析 ini(fake qpkg.conf / def_share.info) ──
 cat > "$TMP/getcfg" <<'MOCK'
@@ -61,37 +69,27 @@ cat > "$TMP/setcfg" <<'MOCK'
 #!/bin/sh
 echo "setcfg $*" >> "${SETCFG_LOG:?}"
 MOCK
+chmod +x "$TMP/getcfg" "$TMP/setcfg"
 
-cat > "$TMP/docker" <<'MOCK'
+# ── 假 QTS 环境:qpkg.conf / def_share.info / 包安装目录 / 假二进制 ──
+# 双架构假二进制都建:测试可能在 arm64 Mac(x86_64 交叉场景)或 CI x86_64 上跑,
+# 服务脚本按 uname -m 选用。env.example 按安装布局放包根(QDK 把 shared/ 平铺到包根)。
+VOL="$TMP/vol"           # 默认存储卷(defVolMP)
+PKGROOT="$TMP/qpkg-root" # 本 QPKG 安装目录(SYS_QPKG_DIR / Install_Path)
+mkdir -p "$PKGROOT/bin" "$VOL"
+cat > "$PKGROOT/bin/pigeonbox-linux-amd64" <<'FAKE'
 #!/bin/sh
-echo "docker $*" >> "${MOCK_LOG:?}"
-case "$1" in
-    info) [ "${MOCK_INFO_FAILS:-0}" = "1" ] && exit 1 ;;
-    ps)   [ "${MOCK_PS_EMPTY:-0}" = "1" ] || echo "c0ffee" ;;
-esac
-exit 0
-MOCK
-
-cat > "$TMP/docker-compose" <<'MOCK'
-#!/bin/sh
-echo "compose-wrapper $*" >> "${MOCK_LOG:?}"
-exit "${MOCK_COMPOSE_EXIT:-0}"
-MOCK
-chmod +x "$TMP/getcfg" "$TMP/setcfg" "$TMP/docker" "$TMP/docker-compose"
-
-# ── 假 QTS 环境:qpkg.conf / def_share.info / CS 目录 / 包安装目录 ──
-VOL="$TMP/vol"                # 默认存储卷(defVolMP)
-CS="$TMP/cs"                  # Container Station 安装目录
-PKGROOT="$TMP/qpkg-root"      # 本 QPKG 安装目录(SYS_QPKG_DIR / Install_Path)
-mkdir -p "$CS/bin" "$PKGROOT/shared" "$VOL"
-cp "$TMP/docker" "$TMP/docker-compose" "$CS/bin/"
-cp qpkg/shared/compose.yml qpkg/shared/env.example "$PKGROOT/shared/"
+# 假服务进程:常驻,TERM/KILL 即死(不服务 /ping,供看门狗无响应场景)
+trap 'exit 0' TERM INT
+while :; do sleep 1; done
+FAKE
+cp "$PKGROOT/bin/pigeonbox-linux-amd64" "$PKGROOT/bin/pigeonbox-linux-arm64"
+chmod +x "$PKGROOT/bin/pigeonbox-linux-amd64" "$PKGROOT/bin/pigeonbox-linux-arm64"
+cp qpkg/shared/env.example "$PKGROOT/env.example"
 cat > "$TMP/qpkg.conf" <<EOF
 [PigeonBox]
 Enable=TRUE
 Install_Path=$PKGROOT
-[container-station]
-Install_Path=$CS
 EOF
 cat > "$TMP/def_share.info" <<EOF
 [SHARE_DEF]
@@ -100,80 +98,157 @@ EOF
 
 # 服务脚本公共环境(被脚本顶层读取,直接 export);mock 日志须导出——start 走后台引导子进程
 APP_DIR="$VOL/pigeonbox"
-export MOCK_LOG SETCFG_LOG FCB_QPKG_CONF="$TMP/qpkg.conf" FCB_GETCFG="$TMP/getcfg" \
-    FCB_SETCFG="$TMP/setcfg" FCB_DEF_SHARE_INFO="$TMP/def_share.info"
-# 模拟 qinstall 安装序:pkg_post_install 先生成 .env,首次 start 在其之后
-mkdir -p "$APP_DIR"
-printf 'FCB_API_PORT=12345\nFCB_DATA_DIR=%s/data\n' "$APP_DIR" > "$APP_DIR/.env"
+export SETCFG_LOG FCB_QPKG_CONF="$TMP/qpkg.conf" FCB_GETCFG="$TMP/getcfg" \
+    FCB_SETCFG="$TMP/setcfg" FCB_DEF_SHARE_INFO="$TMP/def_share.info" \
+    HEALTH_WAIT_MAX=1
 
-echo "── Q1 start:启用状态 → 后台引导 compose up + 图标端口同步"
-: > "$MOCK_LOG"; : > "$SETCFG_LOG"
+echo "── Q1 start:启用状态 → 后台引导拉起二进制 + 图标端口同步"
 sh qpkg/shared/pigeonbox.sh start
 assert_eq "start 立即返回(不阻塞 rcS)" "$?" "0"
-i=0
-while [ $i -lt 30 ] && ! grep -q "started" "$MOCK_LOG" 2>/dev/null; do sleep 0.5; i=$((i + 1)); done
-assert_contains "compose wrapper up -d 已调用"  "$(cat "$MOCK_LOG")" "up -d"
-assert_contains "项目名固定 pigeonbox"        "$(cat "$MOCK_LOG")" "-p pigeonbox"
-assert_contains "env-file 指向卷根 .env"        "$(cat "$MOCK_LOG")" "--env-file $APP_DIR/.env"
-assert_contains "-f 指向包内 compose.yml"       "$(cat "$MOCK_LOG")" "-f $PKGROOT/shared/compose.yml"
-assert_contains "setcfg 同步 Web_Port"          "$(cat "$SETCFG_LOG")" "Web_Port 12345"
-if [ -d "$APP_DIR" ]; then ok "应用目录已创建(data/ 由安装钩子建,Q5 验证)"; else fail "应用目录未创建"; fi
+if wait_for 15 "$APP_DIR/pigeonbox.pid" "[0-9]"; then
+    ok "二进制已拉起(pid 文件就位)"
+else
+    fail "pid 文件未就位"
+fi
+SERVER_PID=$(head -n 1 "$APP_DIR/pigeonbox.pid" 2>/dev/null)
+if kill -0 "$SERVER_PID" 2>/dev/null; then ok "服务进程存活"; else fail "服务进程未存活"; fi
+if wait_for 15 "$SETCFG_LOG" "Web_Port 12345"; then
+    ok "setcfg 同步 Web_Port(.env 端口)"
+else
+    fail "Web_Port 未同步"
+fi
+if [ -f "$APP_DIR/.watchdog_pid" ]; then ok "看门狗已启动"; else fail "看门狗未启动"; fi
+if grep -q "health check\|not ready" "$APP_DIR/pigeonbox.log" 2>/dev/null; then
+    ok "健康等待有记录"
+else
+    fail "健康等待无日志"
+fi
 
-echo "── Q2 status:docker ps 按固定容器名判活"
+echo "── Q2 status:PID 判活(LSF 语义)"
 sh qpkg/shared/pigeonbox.sh status
-assert_eq "容器在跑 → 0" "$?" "0"
-MOCK_PS_EMPTY=1 sh qpkg/shared/pigeonbox.sh status
-assert_eq "容器不在 → 3" "$?" "3"
+assert_eq "进程在跑 → 0" "$?" "0"
+echo 999999 > "$APP_DIR/pigeonbox.pid"
+sh qpkg/shared/pigeonbox.sh status
+assert_eq "pid 不存在 → 3" "$?" "3"
+# 还原真实 pid:Q3 的 stop 依赖 pid 文件定位真进程(顺带验证陈旧 pid 场景下的行为差异)
+printf '%s' "$SERVER_PID" > "$APP_DIR/pigeonbox.pid"
 
-echo "── Q3 stop / remove:down 容忍失败"
-: > "$MOCK_LOG"
+echo "── Q3 stop:先看门狗后服务,幂等"
 sh qpkg/shared/pigeonbox.sh stop
 assert_eq "stop 退出码" "$?" "0"
-assert_contains "down --remove-orphans 已调用" "$(cat "$MOCK_LOG")" "down --remove-orphans"
-MOCK_COMPOSE_EXIT=1 sh qpkg/shared/pigeonbox.sh stop
-assert_eq "compose 失败时 stop 仍为 0" "$?" "0"
-: > "$MOCK_LOG"
-sh qpkg/shared/pigeonbox.sh remove
-assert_eq "remove 退出码" "$?" "0"
-assert_contains "remove 走 down 清理容器" "$(cat "$MOCK_LOG")" "down --remove-orphans"
+if kill -0 "$SERVER_PID" 2>/dev/null; then fail "服务进程未停"; else ok "服务进程已停"; fi
+if [ -f "$APP_DIR/.watchdog_pid" ]; then fail "看门狗 pid 文件残留"; else ok "看门狗已清"; fi
+if [ -f "$APP_DIR/pigeonbox.pid" ]; then fail "服务 pid 文件残留"; else ok "服务 pid 文件已清"; fi
+sh qpkg/shared/pigeonbox.sh stop
+assert_eq "重复 stop 仍为 0(幂等)" "$?" "0"
 
-echo "── Q4 start:停用状态不拉容器"
-: > "$MOCK_LOG"
+echo "── Q4 start:停用状态不拉进程"
 sed 's/^Enable=TRUE/Enable=FALSE/' "$TMP/qpkg.conf" > "$TMP/qpkg-disabled.conf"
 FCB_QPKG_CONF="$TMP/qpkg-disabled.conf" sh qpkg/shared/pigeonbox.sh start
 sleep 2
-assert_not_contains "停用状态无 compose 调用" "$(cat "$MOCK_LOG")" "up -d"
+if [ -f "$APP_DIR/pigeonbox.pid" ]; then fail "停用状态拉起了进程"; else ok "停用状态未拉起进程"; fi
 
-echo "── Q5 pkg_post_install:首次安装生成 .env"
-rm -rf "$VOL/pigeonbox"
-export FCB_GETCFG="$TMP/getcfg" FCB_WRITE_LOG=true SYS_QPKG_DIR="$PKGROOT" QPKG_VER="0.1.0"
+echo "── Q5 pkg_post_install:首次安装生成 .env(PB_ 前缀,无镜像/遗留键)"
+rm -rf "$APP_DIR"
+export FCB_GETCFG="$TMP/getcfg" FCB_WRITE_LOG=true SYS_QPKG_DIR="$PKGROOT" QPKG_VER="1.14.4"
 # shellcheck disable=SC1091
 . qpkg/package_routines
 pkg_post_install
-assert_contains "env 注入默认端口"    "$(cat "$APP_DIR/.env")" "FCB_API_PORT=12345"
-assert_contains "env 注入数据目录"    "$(cat "$APP_DIR/.env")" "FCB_DATA_DIR=$APP_DIR/data"
-assert_contains "镜像 tag 对齐包版本"  "$(cat "$APP_DIR/.env")" "FCB_IMAGE_TAG=v0.1.0"
-assert_count   "IMAGE_TAG 恰好一行"   "$(cat "$APP_DIR/.env")" "^FCB_IMAGE_TAG="
-assert_count   "注册开关保留"         "$(cat "$APP_DIR/.env")" "^FCB_USER_ALLOW_REGISTRATION="
-if [ -d "$APP_DIR/data" ]; then ok "data 目录已建"; else fail "data 目录未建"; fi
+assert_contains "env 注入默认端口"       "$(cat "$APP_DIR/.env")" "PB_SERVER_PORT=12345"
+assert_count    "注册开关保留"           "$(cat "$APP_DIR/.env")" "^PB_USER_ALLOW_REGISTRATION="
+assert_not_contains "无镜像钉版行"       "$(cat "$APP_DIR/.env")" "PB_IMAGE_TAG"
+assert_not_contains "无 FCB_ 前缀行"     "$(cat "$APP_DIR/.env")" "^FCB_"
+assert_count    "PORT 恰好一行"          "$(cat "$APP_DIR/.env")" "^PB_SERVER_PORT="
+if find "$APP_DIR/data" -maxdepth 0 >/dev/null 2>&1; then ok "data 目录已建"; else fail "data 目录未建"; fi
+if find "$APP_DIR/.env" -maxdepth 0 -perm 0600 >/dev/null 2>&1; then
+    ok ".env 权限 600"
+else
+    fail ".env 权限非 600"
+fi
 
-echo "── Q6 pkg_post_install:升级只刷镜像 tag,用户配置保留"
-printf 'FCB_API_PORT=8080\nFCB_DATA_DIR=%s\nFCB_IMAGE_TAG=v0.1.0\n' "$APP_DIR/data" > "$APP_DIR/.env"
-QPKG_VER="0.2.0" pkg_post_install
-assert_contains "镜像 tag 刷新到 v0.2.0" "$(cat "$APP_DIR/.env")" "FCB_IMAGE_TAG=v0.2.0"
-assert_contains "用户端口保留"           "$(cat "$APP_DIR/.env")" "FCB_API_PORT=8080"
-assert_count   "IMAGE_TAG 恰好一行"      "$(cat "$APP_DIR/.env")" "^FCB_IMAGE_TAG="
-if [ ! -f "$APP_DIR/.env.tmp" ]; then ok "无 .tmp 残留"; else fail ".env.tmp 残留"; fi
+echo "── Q6 pkg_post_install:Docker 旧版升级清理死配置,用户配置保留"
+printf 'PB_SERVER_PORT=8080\nPB_ADMIN_PASSWORD="secret"\nFCB_API_PORT=12345\nFCB_IMAGE_TAG=v0.15.7\nPB_IMAGE_TAG=v0.15.7\nPB_API_BIND=0.0.0.0\nPB_MAX_BODY_SIZE=1024m\nTZ=Asia/Shanghai\n' > "$APP_DIR/.env"
+pkg_post_install
+ENV_NOW=$(cat "$APP_DIR/.env")
+assert_contains "用户端口保留"     "$ENV_NOW" "PB_SERVER_PORT=8080"
+assert_contains "管理员密码保留"   "$ENV_NOW" "PB_ADMIN_PASSWORD"
+assert_not_contains "FCB_API_PORT 已清" "$ENV_NOW" "FCB_API_PORT"
+assert_not_contains "FCB_IMAGE_TAG 已清" "$ENV_NOW" "FCB_IMAGE_TAG"
+assert_not_contains "PB_IMAGE_TAG 已清" "$ENV_NOW" "PB_IMAGE_TAG"
+assert_not_contains "PB_API_BIND 已清"  "$ENV_NOW" "PB_API_BIND"
+assert_not_contains "PB_MAX_BODY_SIZE 已清" "$ENV_NOW" "PB_MAX_BODY_SIZE"
+assert_not_contains "TZ 已清"           "$ENV_NOW" "^TZ="
+if [ ! -f "$APP_DIR/.env.bak" ]; then ok "无 .bak 残留"; else fail ".env.bak 残留"; fi
 
-echo "── Q7 卸载钩子字符串按 source 时变量展开(具体路径)"
-cp qpkg/shared/pigeonbox.sh "$PKGROOT/shared/pigeonbox.sh"
-chmod +x "$PKGROOT/shared/pigeonbox.sh"
-: > "$MOCK_LOG"
+echo "── Q7 看门狗:进程消失自动拉起"
+WATCHDOG_INTERVAL=1 sh qpkg/shared/pigeonbox.sh start
+wait_for 15 "$APP_DIR/pigeonbox.pid" "[0-9]" || fail "Q8 前置:进程未起"
+OLD_PID=$(head -n 1 "$APP_DIR/pigeonbox.pid")
+kill -9 "$OLD_PID" 2>/dev/null
+NEW_PID=""
+_i=0
+while [ "$_i" -lt 20 ]; do
+    sleep 1
+    NEW_PID=$(head -n 1 "$APP_DIR/pigeonbox.pid" 2>/dev/null)
+    [ -n "$NEW_PID" ] && [ "$NEW_PID" != "$OLD_PID" ] && kill -0 "$NEW_PID" 2>/dev/null && break
+    _i=$((_i + 1))
+done
+if [ -n "$NEW_PID" ] && [ "$NEW_PID" != "$OLD_PID" ] && kill -0 "$NEW_PID" 2>/dev/null; then
+    ok "崩溃进程已被看门狗拉起($OLD_PID → $NEW_PID)"
+else
+    fail "看门狗未拉起崩溃进程"
+fi
+if grep -q "respawning" "$APP_DIR/pigeonbox.log" 2>/dev/null; then
+    ok "拉起动作有日志"
+else
+    fail "拉起无日志"
+fi
+
+echo "── Q8 看门狗:进程活着但 /ping 无响应 → 重启"
+STABLE_PID=$(head -n 1 "$APP_DIR/pigeonbox.pid")
+_i=0
+while [ "$_i" -lt 20 ]; do
+    sleep 1
+    CUR_PID=$(head -n 1 "$APP_DIR/pigeonbox.pid" 2>/dev/null)
+    if [ -n "$CUR_PID" ] && [ "$CUR_PID" != "$STABLE_PID" ] && kill -0 "$CUR_PID" 2>/dev/null; then
+        break
+    fi
+    _i=$((_i + 1))
+done
+if [ -n "$CUR_PID" ] && [ "$CUR_PID" != "$STABLE_PID" ]; then
+    ok "无响应进程已被看门狗重启($STABLE_PID → $CUR_PID)"
+else
+    fail "看门狗未重启无响应进程"
+fi
+if grep -q "no response, restarting" "$APP_DIR/pigeonbox.log" 2>/dev/null; then
+    ok "重启决策有日志"
+else
+    fail "重启决策无日志"
+fi
+
+echo "── Q9 看门狗停机竞态:stop 后不再拉起"
+sh qpkg/shared/pigeonbox.sh stop
+assert_eq "stop 退出码" "$?" "0"
+sleep 3
+FINAL_PID=$(head -n 1 "$APP_DIR/pigeonbox.pid" 2>/dev/null)
+if [ -z "$FINAL_PID" ] || ! kill -0 "$FINAL_PID" 2>/dev/null; then
+    ok "stop 后进程保持停止(无自愈拉起)"
+else
+    fail "stop 后进程被重新拉起"
+fi
+
+echo "── Q10 卸载钩子字符串按 source 时变量展开(具体路径;最后跑,钩内 unset 清场)"
+cp qpkg/shared/pigeonbox.sh "$PKGROOT/pigeonbox.sh"
+chmod +x "$PKGROOT/pigeonbox.sh"
+# 先起一组进程供卸载停服
+sh qpkg/shared/pigeonbox.sh start
+wait_for 15 "$APP_DIR/pigeonbox.pid" "[0-9]" || fail "Q10 前置:进程未起"
+UPID=$(head -n 1 "$APP_DIR/pigeonbox.pid")
 eval "$PKG_PRE_REMOVE"
 assert_eq "PKG_PRE_REMOVE 执行退出码" "$?" "0"
-i=0
-while [ $i -lt 20 ] && ! grep -q "down --remove-orphans" "$MOCK_LOG" 2>/dev/null; do sleep 0.5; i=$((i + 1)); done
-assert_contains "卸载钩子调用了服务脚本 remove" "$(cat "$MOCK_LOG")" "down --remove-orphans"
+_i=0
+while kill -0 "$UPID" 2>/dev/null && [ "$_i" -lt 20 ]; do sleep 0.5; _i=$((_i + 1)); done
+if kill -0 "$UPID" 2>/dev/null; then fail "卸载钩子未停服"; else ok "卸载钩子调用了服务脚本 remove 并停服"; fi
 unset FCB_GETCFG FCB_WRITE_LOG SYS_QPKG_DIR QPKG_VER GETCFG WRITE_LOG
 unset pkg_pre_install pkg_post_install PKG_PRE_REMOVE PKG_MAIN_REMOVE PKG_POST_REMOVE
 
