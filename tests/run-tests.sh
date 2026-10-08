@@ -117,8 +117,9 @@ if wait_for 15 "$SETCFG_LOG" "Web_Port 12345"; then
 else
     fail "Web_Port 未同步"
 fi
-if [ -f "$APP_DIR/.watchdog_pid" ]; then ok "看门狗已启动"; else fail "看门狗未启动"; fi
-if grep -q "health check\|not ready" "$APP_DIR/pigeonbox.log" 2>/dev/null; then
+# 看门狗/健康日志由后台 __boot_start 在健康等待后写入,须等而非即查(CI 快机竞态)
+if wait_for 15 "$APP_DIR/.watchdog_pid" "[0-9]"; then ok "看门狗已启动"; else fail "看门狗未启动"; fi
+if wait_for 15 "$APP_DIR/pigeonbox.log" "health check\|not ready"; then
     ok "健康等待有记录"
 else
     fail "健康等待无日志"
