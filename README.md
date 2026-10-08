@@ -32,7 +32,7 @@ PigeonBox（文件快递柜，匿名口令分享文本/文件）的 **威联通 
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `PB_SERVER_PORT` | `12345` | 服务端口（App Center 图标链接自动跟随） |
-| `PB_ADMIN_PASSWORD` | 空 | 管理员密码（生产门禁：首启时留空且库中无管理员=拒绝启动，防弱口令上线） |
+| `PB_ADMIN_PASSWORD` | 空 | 管理员密码（首启无管理员时以本值播种 admin；留空 = 默认 `admin/admin123`，装完立即改密） |
 | `PB_SERVER_BASE_URL` | 空 | 对外完整地址（有域名/HTTPS 反代时填，分享链接会用它；留空按请求来源推断） |
 | `PB_USER_ALLOW_REGISTRATION` | `false` | 开放注册（NAS 场景默认关闭，管理员建号） |
 | `PB_TRUSTED_PROXIES` | 空 | 可信代理 CIDR（套反代时必填，否则限流按代理 IP 计数） |
