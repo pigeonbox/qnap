@@ -31,10 +31,7 @@ jobs:
           if [ -f VERSION ]; then
             [ "$(cat VERSION)" = "${VER#v}" ] || { echo "::error::VERSION=$(cat VERSION) ≠ tag $VER——发版走 hub 列车 bump,勿手改 VERSION"; exit 1; }
           fi
-      - name: 读依赖钉版(DEPS.env;前列车 tag 无此文件时回退 main)
-        run: |
-          if [ -f DEPS.env ]; then grep -E '^FRONTEND_REF=' DEPS.env >> "$GITHUB_ENV"
-          else echo "::warning::无 DEPS.env(前列车 tag),FRONTEND_REF 回退 main"; echo "FRONTEND_REF=main" >> "$GITHUB_ENV"; fi
+      # 前端自包含在本仓 web/(frontend-core tgz 钉版=web/package.json),无需读壳仓 ref
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
