@@ -82,9 +82,9 @@ PigeonBox（文件快递柜，匿名口令分享文本/文件）的 **威联通 
 
 ## 开发与构建
 
-仓库结构：`cmd/pigeonbox`（Go 入口,库调用 core）+ `internal/adminreset`（密码重置）+ `qpkg/`（qpkg.cfg / package_routines / shared 服务脚本+env 模板 / icons / 双架构 bin 产物位）+ `scripts/`（build-native 组产物,build-qpkg QDK 组包）+ `tests/`（mock 冒烟）。
+仓库结构：`cmd/pigeonbox`（Go 入口,库调用 core）+ `internal/adminreset`（密码重置）+ `web/`（QTS 宿主适配器+公共前端 core,构建 QPKG 的 www 产物,2026-10-09 起自包含）+ `qpkg/`（qpkg.cfg / package_routines / shared 服务脚本+env 模板 / icons / 双架构 bin 产物位）+ `scripts/`（build-native 组产物,build-qpkg QDK 组包）+ `tests/`（mock 冒烟）。
 
-依赖钉版走发版列车：`CORE_PIN`/`FRONTEND_REF` 在 `DEPS.env`（真相源=hub `release/train.yaml`,由 `make train-bump` 写入,勿手改）。
+依赖钉版走发版列车：`CORE_PIN`/`FRONTEND_CORE_PIN` 在 `DEPS.env`（真相源=hub `release/train.yaml`,由 `make train-bump` 写入,勿手改）。
 
 ```sh
 # 本地开发(工作区内联编本地 core / GOWORK=off 钉正式 tag,两者皆可)

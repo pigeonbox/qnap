@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- 相对路径引用:根路径部署语义不变;统一网关(/app/pigeonbox/)等带前缀
+         场景下 favicon/首帧脚本不再丢前缀 404 -->
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="./favicon-16x16.png" />
+    <link rel="icon" sizes="48x48" href="./favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PigeonBox</title>
+    <!-- 首帧引导外链（同步阻塞脚本，执行时机与原内联一致）：
+         独立文件配合 CSP script-src 'self'，内联脚本会迫使开 'unsafe-inline' -->
+    <script src="./theme-init.js"></script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
