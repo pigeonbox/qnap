@@ -21,7 +21,7 @@ jobs:
   payload:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # 手动 dispatch 时按输入版本检出对应 tag,产物与 tag 严格一致
           ref: ${{ inputs.version || github.ref_name }}
@@ -58,7 +58,7 @@ jobs:
         arch: [x86_64, arm_64]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.version || github.ref_name }}
       - uses: actions/download-artifact@v7
