@@ -15,7 +15,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: shellcheck
         run: |
           shellcheck qpkg/shared/pigeonbox.sh tests/run-tests.sh \
@@ -38,7 +38,7 @@ jobs:
   go-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
@@ -49,7 +49,7 @@ jobs:
     # 原生产物一次构建(双架构静态二进制 + 前端 www),供运行冒烟与组包共用
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
@@ -76,7 +76,7 @@ jobs:
     needs: payload
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v7
         with:
           name: payload
@@ -116,7 +116,7 @@ jobs:
       matrix:
         arch: [x86_64, arm_64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v7
         with:
           name: payload
