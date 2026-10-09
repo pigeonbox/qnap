@@ -51,9 +51,14 @@ const capabilities: HostCapabilities = {
   appSettings: false,
 }
 
-export const qnapHostAdapter: HostAdapter = {
+export const qnapHostAdapter = {
   name: '威联通',
   capabilities,
+  // 0.1.6 SPI:宿主 SSO 登录端点——其 401 是「SSO 不可用」的预期安全失败,
+  // 请求层豁免刷新/跳登录页(同 fnos,cb1ff09 真机白屏修复下沉适配器声明)。
+  // 钉版类型 0.1.5 代际靠尾部 as HostAdapter 断言过多余属性检查;
+  // web 钉版随列车升 0.1.6 后可还原为类型标注。
+  ssoLoginPaths: ['/api/qnap/login'],
 
   async init() {
     const caps = await getQnapCapabilities(true)
@@ -129,4 +134,4 @@ export const qnapHostAdapter: HostAdapter = {
       return Promise.resolve(false)
     }
   },
-}
+} as HostAdapter
