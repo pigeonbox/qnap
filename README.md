@@ -13,6 +13,7 @@ PigeonBox（文件快递柜，匿名口令分享文本/文件）的 **威联通 
 - JWT 密钥首启自动生成并持久化到数据目录，重启/升级不丢
 - **卸载保留数据**：数据在存储卷根 `pigeonbox/` 目录（QPKG 卸载会删除安装目录，卷根数据不受影响）
 - **Docker 旧版原地升级**：QPKG 同名升级即切换为原生进程，卷根数据（SQLite 库/上传文件）直接延续
+- **QTS 原生集成**（2026-10-09）：**NAS 账号 SSO 免登录**（复用浏览器 QTS 会话 `NAS_SID`，后端经本机 `authLogin.cgi` 实时校验，伪造会话必被拒）+ NAS 系统信息（型号/固件）；非 QNAP 环境自动降级、业务不受影响
 
 > 系统要求：QTS 4.5+。无外部依赖。
 
@@ -23,7 +24,21 @@ PigeonBox（文件快递柜，匿名口令分享文本/文件）的 **威联通 
 3. 安装完成自动启动，App Center 主菜单/桌面点 PigeonBox 图标，或浏览器访问 `http://NAS的IP:12345`
 4. 默认管理员 `admin/admin123`——**装完先改密码**（或按下文在 `.env` 预置 `PB_ADMIN_PASSWORD` 后再首启）
 
-> **真机验证状态**：qbuild 组包 + payload 结构断言 + 真二进制运行冒烟过 CI；QTS 真机安装验证待补（欢迎反馈 issue）。
+> **真机验证状态**（2026-10-09）：QTS 5.2.10 真机（x86_64）安装/自启/看门狗/密码重置/QTS 原生集成全链路已验证；arm_64 与 QTS 4.5 老固件待有设备再验（欢迎反馈 issue）。
+
+## QTS 原生集成（SSO / 系统信息）
+
+应用后端内置 QTS 原生 CGI client（`adapter/`，契约经 QTS 5.2 真机实测）：
+
+| 端点 | 说明 |
+|---|---|
+| `GET /api/qnap/capabilities` | 能力探测（任何环境可调，如实回报降级原因） |
+| `POST /api/qnap/login` | **SSO 免登录**：浏览器自动携带 QTS 会话 cookie `NAS_SID`（cookie 不隔离端口），后端转交本机 `authLogin.cgi?sid=` 实时校验后映射本地用户（`qnap-<用户名>`）并签发本系统会话；QTS 管理员不自动映射为 PigeonBox 管理员，提权走密码登录 |
+| `GET /api/qnap/system` | NAS 系统信息（型号/固件版本/主机名；需登录 + QTS 会话） |
+
+安全边界：QTS 会话凭据只发往 loopback 的 QTS API（非 loopback 地址拒绝构造 client），不落盘、不记日志；伪造/过期 sid 在 QTS 侧即被拒（`authPassed=0`），不存在可信头注入面。排障可用 `PB_QNAP_DISABLED=1` 强制关闭联动，或 `PB_QNAP_QTS_BASE` 显式指定 QTS API 地址（默认自动探测 5001/80/8081/443/8080）。
+
+> 授权目录/通知中心：QTS 5.2 无稳定公开 API（File Station 旧面 `entry.cgi` 已不可用），诚实缺席、不造假开关；待官方 API 稳定后接入。
 
 ## 配置
 
@@ -38,6 +53,8 @@ PigeonBox（文件快递柜，匿名口令分享文本/文件）的 **威联通 
 | `PB_TRUSTED_PROXIES` | 空 | 可信代理 CIDR（套反代时必填，否则限流按代理 IP 计数） |
 | `PB_JWT_SECRET` | 空 | 留空=数据目录自动生成持久化（`.jwt_secret`） |
 | `PB_REDIS_HOST` | 空 | 默认单机内存模式（免 Redis 全功能；启用需自备实例） |
+| `PB_QNAP_QTS_BASE` | 空 | QTS API 地址覆盖（如 `https://127.0.0.1:5001`；留空自动探测） |
+| `PB_QNAP_DISABLED` | 空 | 非空 = 强制关闭 QTS 联动（SSO/系统信息，排障用） |
 
 ### 改/重置管理员密码
 

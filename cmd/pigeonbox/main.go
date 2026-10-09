@@ -26,6 +26,7 @@ import (
 
 	"github.com/pigeonbox/core/bootstrap"
 	"github.com/pigeonbox/core/pkg/logger"
+	"github.com/pigeonbox/qnap/adapter"
 	"github.com/pigeonbox/qnap/internal/adminreset"
 	"github.com/pigeonbox/kit/version"
 
@@ -131,6 +132,9 @@ func main() {
 		os.Exit(1)
 	}
 	defer bootstrap.Cleanup()
+
+	// 1.5 挂载 QNAP 深度集成(SSO/系统信息;非 QNAP 环境自动降级,业务不受影响)。
+	adapter.Mount(h, adapter.LoadConfig())
 
 	// 2. 启动 HTTP 服务。
 	go func() {

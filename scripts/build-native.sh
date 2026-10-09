@@ -46,8 +46,11 @@ rm -rf "$QPKG_DIR/shared/www"
 SRC="${FRONTEND_DIST:-}"
 CLEANUP_SRC=""
 if [ -z "$SRC" ]; then
-  if [ -f "$ROOT/../../frontend/package.json" ]; then
-    SRC="$(cd "$ROOT/../../frontend" && pwd)"
+  # 工作区布局:hub(PigeonBox/)内 qnap/ 与 frontend/ 同级——探测 ../frontend。
+  # (fnos build-native.sh 同款修复:此前多一级 ../../frontend 静默克隆远端,
+  #  本地壳仓改动/fnos 融合前端不进包,qnap flavor 亦然)
+  if [ -f "$ROOT/../frontend/package.json" ]; then
+    SRC="$(cd "$ROOT/../frontend" && pwd)"
     echo "    使用工作区 frontend: $SRC"
   else
     SRC="$(mktemp -d)/frontend"
@@ -61,7 +64,10 @@ trap '[ -n "${CLEANUP_SRC:-}" ] && rm -rf "$(dirname "$CLEANUP_SRC")"' EXIT
 
 cd "$SRC"
 [ -d node_modules ] || npm ci --no-audit --no-fund
-npx vite build --outDir "$QPKG_DIR/shared/www" --emptyOutDir
+# 必须用 build:qnap flavor(注入 QNAP 宿主适配器:SSO 静默登录等);
+# 默认 vite.config.ts 是 neutral flavor(零平台代码),QPKG 不用。
+# (对齐 fnos 的 build-native.sh 用 vite.fnos.config.ts 的同款约束)
+npx vite build --config vite.qnap.config.ts --outDir "$QPKG_DIR/shared/www" --emptyOutDir
 
 echo "==> 完成"
 ls -lh "$QPKG_DIR"/*/bin/
