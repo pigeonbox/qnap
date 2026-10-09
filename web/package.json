@@ -1,7 +1,7 @@
 {
   "name": "@pigeonbox/qnap-web",
   "private": true,
-  "version": "0.15.8",
+  "version": "0.15.9",
   "description": "PigeonBox QNAP(QTS) 内嵌前端:QTS 宿主适配器+公共应用 core(@pigeonbox/frontend-core tgz);QPKG 的 www 产物自本目录构建",
   "scripts": {
     "build": "vite build",
@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@pigeonbox/contracts": "https://github.com/pigeonbox/contracts/releases/download/v0.8.0/pigeonbox-contracts-0.8.0.tgz",
-    "@pigeonbox/frontend-core": "https://github.com/pigeonbox/frontend-core/releases/download/v0.1.4/pigeonbox-frontend-core-0.1.4.tgz"
+    "@pigeonbox/frontend-core": "https://github.com/pigeonbox/frontend-core/releases/download/v0.1.5/pigeonbox-frontend-core-0.1.5.tgz"
   },
   "devDependencies": {
     "@types/node": "^24.12.0",
