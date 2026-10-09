@@ -64,7 +64,7 @@ jobs:
           VERSION: 0.0.0-ci
           COMMIT: ci
         run: ./scripts/build-native.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: payload
           path: qpkg/
@@ -152,7 +152,7 @@ jobs:
           tar -tzf /tmp/data.tar.gz | grep -q '^\./pigeonbox\.sh$'
           tar -tzf /tmp/data.tar.gz | grep -q '^\./env\.example$'
           tar -tzf /tmp/data.tar.gz | grep -q '^\./\.qpkg_icon\.gif$'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: qpkg-${{ matrix.arch }}
           path: |
