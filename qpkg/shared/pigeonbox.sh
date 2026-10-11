@@ -104,6 +104,9 @@ launch() {
 # 看门狗自愈循环(由 start_process 后台拉起,继承环境;语义对齐 fnos cmd/main):
 #   每个周期探活;进程消失(崩溃/被杀)直接重新拉起;/ping 连续 3 次失败重启进程。
 # 终止条件:stop 先杀看门狗再杀 server,不会与正常停机竞态。
+# ⚠ 双胞胎警示:本脚本与 fnos 仓 cmd/main 的看门狗/健康探测/日志截尾逻辑
+# 同构(方言差异:本侧 POSIX sh、彼侧 bash)。单侧修改 watchdog 阈值/探活
+# 方式/截尾上限时,请评估另一侧是否需要同步(共享库下沉已评估暂缓)。
 watchdog_loop() {
     _fail=0
     while :; do
