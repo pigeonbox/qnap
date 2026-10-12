@@ -53,6 +53,15 @@ else
     npx vite build --outDir "$QPKG_DIR/shared/www" --emptyOutDir
 fi
 
+
+# ── 版本戳自证(2026-10-12 版本幽灵根治) ──────────────────────────
+# web 版本单一来源 = APP_VERSION 环境变量 / web/package.json;构建即写
+# version.txt 并断言 dist 内戳一致,不一致=构建红。运维验收一条
+# curl -s <host>/version.txt 即可验真,永别「页脚是几」猜谜与缓存伪影。
+WEB_VERSION="${APP_VERSION:-$(node -p "require('$ROOT/web/package.json').version")}"
+printf '%s\n' "$WEB_VERSION" > "$QPKG_DIR/shared/www/version.txt"
+grep -rqF "$WEB_VERSION" "$QPKG_DIR/shared/www/assets" 2>/dev/null || { echo "✗ dist 未发现版本戳 $WEB_VERSION(__APP_VERSION__ 注入失效?)"; exit 1; }
+echo "    版本自证 ✓ version.txt=$WEB_VERSION 与 dist 戳一致"
 echo "==> 完成"
 ls -lh "$QPKG_DIR"/*/bin/
 du -sh "$QPKG_DIR/shared/www"
