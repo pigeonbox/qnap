@@ -37,10 +37,13 @@ WATCHDOG_PID_FILE="${APP_DIR}/.watchdog_pid"
 
 # 按架构选二进制(build-native.sh 产出的静态链接文件)
 case "$(uname -m)" in
-    x86_64)          BIN="${QPKG_ROOT}/bin/pigeonbox-linux-amd64" ;;
-    aarch64|arm64)   BIN="${QPKG_ROOT}/bin/pigeonbox-linux-arm64" ;;
+    x86_64)          BIN="${QPKG_ROOT}/bin/pigeonbox-linux-amd64"
+                     export PB_P2PC_PATH="${QPKG_ROOT}/bin/p2pc-linux-amd64" ;;
+    aarch64|arm64)   BIN="${QPKG_ROOT}/bin/pigeonbox-linux-arm64"
+                     export PB_P2PC_PATH="${QPKG_ROOT}/bin/p2pc-linux-arm64" ;;
     *)               BIN="" ;;
 esac
+# p2pc 设备直传随包(P2b):包内无此文件时 core 探测失败优雅降级(直传页引导态)。
 
 # 可调参数(仅供测试注入加速;QTS 运行环境用默认值)
 HEALTH_WAIT_MAX="${HEALTH_WAIT_MAX:-10}"
