@@ -14,6 +14,7 @@ PigeonBox（文件快递柜，匿名口令分享文本/文件）的 **威联通 
 - **卸载保留数据**：数据在存储卷根 `pigeonbox/` 目录（QPKG 卸载会删除安装目录，卷根数据不受影响）
 - **Docker 旧版原地升级**：QPKG 同名升级即切换为原生进程，卷根数据（SQLite 库/上传文件）直接延续
 - **QTS 原生集成**（2026-10-09）：**NAS 账号 SSO 免登录**（复用浏览器 QTS 会话 `NAS_SID`，后端经本机 `authLogin.cgi` 实时校验，伪造会话必被拒）+ NAS 系统信息（型号/固件）；非 QNAP 环境自动降级、业务不受影响
+- **设备直传**：QPKG 随包 p2pc 双架构二进制（DEPS.env `P2PC_REF` 钉版+sha256 校验），服务脚本自动注入 `PB_P2PC_PATH`；admin「系统配置→P2P」分区热启停联邦与设备直传
 
 > 系统要求：QTS 4.5+。无外部依赖。
 
@@ -53,6 +54,7 @@ PigeonBox（文件快递柜，匿名口令分享文本/文件）的 **威联通 
 | `PB_TRUSTED_PROXIES` | 空 | 可信代理 CIDR（套反代时必填，否则限流按代理 IP 计数） |
 | `PB_JWT_SECRET` | 空 | 留空=数据目录自动生成持久化（`.jwt_secret`） |
 | `PB_REDIS_HOST` | 空 | 默认单机内存模式（免 Redis 全功能；启用需自备实例） |
+| `PB_P2PC_PATH` | 自动 | p2pc 设备直传二进制路径（服务脚本按架构自动注入包内随带二进制，无需手改） |
 | `PB_QNAP_QTS_BASE` | 空 | QTS API 地址覆盖（如 `https://127.0.0.1:5001`；留空自动探测） |
 | `PB_QNAP_DISABLED` | 空 | 非空 = 强制关闭 QTS 联动（SSO/系统信息，排障用） |
 
@@ -84,7 +86,7 @@ PigeonBox（文件快递柜，匿名口令分享文本/文件）的 **威联通 
 
 仓库结构：`cmd/pigeonbox`（Go 入口,库调用 core）+ `internal/adminreset`（密码重置）+ `web/`（QTS 宿主适配器+公共前端 core,构建 QPKG 的 www 产物,2026-10-09 起自包含）+ `qpkg/`（qpkg.cfg / package_routines / shared 服务脚本+env 模板 / icons / 双架构 bin 产物位）+ `scripts/`（build-native 组产物,build-qpkg QDK 组包）+ `tests/`（mock 冒烟）。
 
-依赖钉版走发版列车：`CORE_PIN`/`FRONTEND_CORE_PIN` 在 `DEPS.env`（真相源=hub `release/train.yaml`,由 `make train-bump` 写入,勿手改）。
+依赖钉版走发版列车：`CORE_PIN`/`FRONTEND_CORE_PIN`/`P2PC_REF` 在 `DEPS.env`（真相源=hub `release/train.yaml`,由 `make train-bump` 写入,勿手改）。
 
 ```sh
 # 本地开发(工作区内联编本地 core / GOWORK=off 钉正式 tag,两者皆可)
