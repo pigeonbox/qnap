@@ -44,7 +44,7 @@ jobs:
           VERSION: ${{ inputs.version || github.ref_name }}
           COMMIT: ${{ github.sha }}
         run: ./scripts/build-native.sh
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: payload
           path: qpkg/
@@ -97,7 +97,7 @@ jobs:
           # tar -tzf 对截断 gzip 仍可列出索引,单靠 grep 骗得过）
           QPKG_SIZE=$(stat -c%s "$QPKG")
           [ "$QPKG_SIZE" -ge 10485760 ] || { echo "::error::QPKG 仅 ${QPKG_SIZE}B(<10MB),疑似截断"; exit 1; }
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: qpkg-${{ matrix.arch }}
           path: |
