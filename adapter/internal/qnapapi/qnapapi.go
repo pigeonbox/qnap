@@ -171,14 +171,14 @@ func (c *Client) CheckSid(ctx context.Context, sid string) (*Identity, error) {
 
 // SystemInfo 系统信息(型号/固件版本),用于 /api/qnap/system 展示宿主环境。
 type SystemInfo struct {
-	ModelName    string `json:"modelName"`
-	FirmwareVer  string `json:"firmwareVersion"`
-	Hostname     string `json:"hostname"`
+	ModelName   string `json:"modelName"`
+	FirmwareVer string `json:"firmwareVersion"`
+	Hostname    string `json:"hostname"`
 }
 
 type sysResp struct {
-	XMLName  xml.Name `xml:"QDocRoot"`
-	Model    struct {
+	XMLName xml.Name `xml:"QDocRoot"`
+	Model   struct {
 		ModelName string `xml:"modelName"`
 	} `xml:"model"`
 	Firmware struct {

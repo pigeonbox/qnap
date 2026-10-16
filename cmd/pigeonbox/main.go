@@ -24,11 +24,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/oekit/core/version"
 	"github.com/pigeonbox/core/bootstrap"
 	"github.com/pigeonbox/core/pkg/logger"
 	"github.com/pigeonbox/qnap/adapter"
 	"github.com/pigeonbox/qnap/internal/adminreset"
-	"github.com/oekit/core/version"
 
 	"go.uber.org/zap"
 )

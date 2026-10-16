@@ -10,9 +10,9 @@
 // authPassed=0,不存在可注入的伪造面,故无需 nonce。
 //
 // 身份映射(镜像 core OIDC 域范式,与 fnos sso 同构):
-//   1. 按 qnap:<userid> 精确匹配(users.oidc_sub 外部身份键,前缀隔离值域)
-//   2. 未命中 → 以 "qnap-<username>" 去重建号(role=user,无密码)
-//   3. 签发本系统 JWT + HttpOnly 会话 Cookie,前端零改动进入登录态
+//  1. 按 qnap:<userid> 精确匹配(users.oidc_sub 外部身份键,前缀隔离值域)
+//  2. 未命中 → 以 "qnap-<username>" 去重建号(role=user,无密码)
+//  3. 签发本系统 JWT + HttpOnly 会话 Cookie,前端零改动进入登录态
 //
 // 安全:QTS 管理员(isAdmin)不映射为 PigeonBox 管理员——两套权限语义不同,
 // 提权一律走密码登录;sid 仅用于本次校验,不落盘不记日志不回显。
