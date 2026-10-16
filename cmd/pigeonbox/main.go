@@ -28,7 +28,7 @@ import (
 	"github.com/pigeonbox/core/pkg/logger"
 	"github.com/pigeonbox/qnap/adapter"
 	"github.com/pigeonbox/qnap/internal/adminreset"
-	"github.com/pigeonbox/kit/version"
+	"github.com/oekit/core/version"
 
 	"go.uber.org/zap"
 )
