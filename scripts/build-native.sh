@@ -38,13 +38,13 @@ for goarch in amd64 arm64; do
     -o "$QPKG_DIR/${qarch}/bin/pigeonbox-linux-${goarch}" ./cmd/pigeonbox
 done
 
-# ── 随包 p2pc 设备直传(2026-10-14 对称节点 P2b) ──────────────────
-# 版本=DEPS.env P2PC_REF(发布列车写 lib.p2p;缺省跳过=直传不可用优雅降级)。
+# ── 随包 p2pc/p2pcweb 设备直传(P2b;A2 起含网页客户端) ──────────────────
+# 版本=DEPS.env P2PC_REF(列车写 terminal.p2pc_ref;缺省跳过=直传不可用优雅降级)。
 # 下载顺序 curl → gh release download(本机 github 直连被断时兜底);
 # checksums.txt 侧车强制校验。
 fetch_p2pc() {
-  local ref="$1" dest="$2" triple="$3"
-  local asset="p2pc-${triple}" base="https://github.com/pigeonbox/p2p/releases/download/${ref}"
+  local ref="$1" dest="$2" triple="$3" prefix="$4"
+  local asset="${prefix}-${triple}" base="https://github.com/pigeonbox/p2p/releases/download/${ref}"
   local tmp; tmp="$(mktemp -d)"
   local ok=""
   if curl -fsSL -m 60 -o "$tmp/checksums.txt" "${base}/p2pc-checksums.txt" 2>/dev/null \
@@ -56,17 +56,17 @@ fetch_p2pc() {
       && ok=1
   fi
   if [ -z "$ok" ]; then
-    echo "✗ p2pc ${asset}@${ref} 下载失败(curl/gh 均不可用或失败)"; rm -rf "$tmp"; return 1
+    echo "✗ ${asset}@${ref} 下载失败(curl/gh 均不可用或失败)"; rm -rf "$tmp"; return 1
   fi
   if ! (cd "$tmp" && grep " ${asset}\$" checksums.txt | shasum -a 256 -c - >/dev/null); then
-    echo "✗ p2pc ${asset}@${ref} sha256 校验失败"; rm -rf "$tmp"; return 1
+    echo "✗ ${asset}@${ref} sha256 校验失败"; rm -rf "$tmp"; return 1
   fi
   install -m 0755 "$tmp/${asset}" "$dest"
   rm -rf "$tmp"
-  echo "    ✓ p2pc ${triple} @ ${ref}"
+  echo "    ✓ ${prefix} ${triple} @ ${ref}"
 }
 
-echo "==> 随包 p2pc(设备直传)"
+echo "==> 随包 p2pc/p2pcweb(设备直传+网页客户端)"
 P2PC_REF=$(sed -n 's/^P2PC_REF=//p' "$ROOT/DEPS.env" | tr -d ' \r')
 if [ -n "$P2PC_REF" ]; then
   for goarch in amd64 arm64; do
@@ -75,7 +75,8 @@ if [ -n "$P2PC_REF" ]; then
       arm64) qarch=arm_64; triple=aarch64-unknown-linux-gnu ;;
     esac
     mkdir -p "$QPKG_DIR/${qarch}/bin"
-    fetch_p2pc "$P2PC_REF" "$QPKG_DIR/${qarch}/bin/p2pc-linux-${goarch}" "$triple"
+    fetch_p2pc "$P2PC_REF" "$QPKG_DIR/${qarch}/bin/p2pc-linux-${goarch}" "$triple" p2pc
+    fetch_p2pc "$P2PC_REF" "$QPKG_DIR/${qarch}/bin/p2pcweb-linux-${goarch}" "$triple" p2pc-web
   done
 else
   echo "    (DEPS.env 无 P2PC_REF,跳过——包内直传不可用,优雅降级)"

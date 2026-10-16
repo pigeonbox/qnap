@@ -45,6 +45,17 @@ case "$(uname -m)" in
 esac
 # p2pc 设备直传随包(P2b):包内无此文件时 core 探测失败优雅降级(直传页引导态)。
 
+# p2pcweb(PigeonBeam 信鸽直传网页客户端,2026-10-16 A2 内嵌,与 fnos 同构):
+# LAN 暴露 + 持久令牌门禁(--token-file/--config-file 落数据卷,p2pcweb 自持读写);
+# 端口 PB_P2PCWEB_PORT(.env 可覆盖,默认 12348);接收目录=数据卷(投递到柜同机路径最短)。
+# 包内无此二进制时优雅跳过(老包升级首启兼容)。
+P2PCWEB_BIN=""
+case "$(uname -m)" in
+    x86_64)          P2PCWEB_BIN="${QPKG_ROOT}/bin/p2pcweb-linux-amd64" ;;
+    aarch64|arm64)   P2PCWEB_BIN="${QPKG_ROOT}/bin/p2pcweb-linux-arm64" ;;
+esac
+P2PCWEB_PID_FILE="${APP_DIR}/p2pcweb.pid"
+
 # 可调参数(仅供测试注入加速;QTS 运行环境用默认值)
 HEALTH_WAIT_MAX="${HEALTH_WAIT_MAX:-10}"
 WATCHDOG_INTERVAL="${WATCHDOG_INTERVAL:-30}"
@@ -114,6 +125,14 @@ watchdog_loop() {
     _fail=0
     while :; do
         sleep "${WATCHDOG_INTERVAL}"
+        # p2pcweb 自愈:进程消失(崩溃/被杀)即重新拉起(环境沿用本循环继承的导出)
+        if [ -n "$P2PCWEB_BIN" ] && [ -f "$P2PCWEB_BIN" ] && [ -f "${P2PCWEB_PID_FILE}" ]; then
+            _bpid=$(head -n 1 "${P2PCWEB_PID_FILE}" 2>/dev/null | tr -d '[:space:]')
+            if ! kill -0 "${_bpid}" 2>/dev/null; then
+                log_msg "watchdog: p2pcweb process gone, respawning"
+                start_p2pcweb
+            fi
+        fi
         _pid=$(head -n 1 "${PID_FILE}" 2>/dev/null | tr -d '[:space:]')
         if ! kill -0 "${_pid}" 2>/dev/null; then
             log_msg "watchdog: server process gone, respawning"
@@ -151,6 +170,39 @@ start_watchdog() {
 
 check_process() {
     kill -0 "$1" 2>/dev/null
+}
+
+# p2pcweb 生命周期(A2):start 在 server 健康后拉起,stop 在 server 之前停。
+start_p2pcweb() {
+    [ -n "$P2PCWEB_BIN" ] && [ -f "$P2PCWEB_BIN" ] || { log_msg "p2pcweb binary missing, skip"; return 0; }
+    if check_process "$(cat "${P2PCWEB_PID_FILE}" 2>/dev/null)"; then
+        return 0
+    fi
+    chmod +x "$P2PCWEB_BIN" 2>/dev/null || true
+    _beam_port="${PB_P2PCWEB_PORT:-12348}"
+    log_msg "Starting p2pcweb on 0.0.0.0:${_beam_port} ..."
+    "$P2PCWEB_BIN" --addr "0.0.0.0:${_beam_port}" \
+        --token-file "${PB_DATA_PATH}/.p2pcweb_token" \
+        --config-file "${PB_DATA_PATH}/p2pcweb.json" \
+        --out "${PB_DATA_PATH}" \
+        --no-open >>"${LOG_FILE}" 2>&1 &
+    printf "%s" "$!" >"${P2PCWEB_PID_FILE}"
+}
+
+stop_p2pcweb() {
+    [ -f "${P2PCWEB_PID_FILE}" ] || return 0
+    _bpid=$(head -n 1 "${P2PCWEB_PID_FILE}" 2>/dev/null | tr -d '[:space:]')
+    if check_process "${_bpid}"; then
+        kill -TERM "${_bpid}" 2>/dev/null || true
+        _bc=0
+        while check_process "${_bpid}" && [ "${_bc}" -lt 5 ]; do
+            sleep 1
+            _bc=$((_bc + 1))
+        done
+        check_process "${_bpid}" && kill -KILL "${_bpid}" 2>/dev/null || true
+        log_msg "p2pcweb stopped (${_bpid})"
+    fi
+    rm -f "${P2PCWEB_PID_FILE}"
 }
 
 status() {
@@ -193,6 +245,8 @@ start_process() {
     [ "${_waited}" -ge "${HEALTH_WAIT_MAX}" ] && \
         log_msg "warn: /ping not ready after ${_waited}s (process may still be migrating)"
     start_watchdog
+    # PigeonBeam 网页客户端随主服务拉起(A2;失败不阻断主服务)
+    start_p2pcweb
     return 0
 }
 
@@ -205,6 +259,8 @@ stop_process() {
         rm -f "${WATCHDOG_PID_FILE}"
         log_msg "watchdog stopped (${_wdpid})"
     fi
+    # 再停 p2pcweb(避免看门狗复活它)
+    stop_p2pcweb
     if [ -r "${PID_FILE}" ]; then
         _pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
         if ! check_process "${_pid}"; then

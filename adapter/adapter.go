@@ -1,15 +1,17 @@
 // Package adapter 装配 QNAP(QTS)深度集成。
 //
 // 2026-10-09 按 QTS 原生 CGI API 真实现(契约经 QTS 5.2.10 真机实测钉死):
-//   SSO 免登录 sso  — NAS_SID 会话 cookie → authLogin.cgi?sid= 校验 →
-//                     本地用户映射 + 会话签发(POST /api/qnap/login);
-//   系统信息        — sysRequest.cgi get_system_info(GET /api/qnap/system);
-//   后端 API client — internal/qnapapi(loopback QTS CGI,会话凭据不出本机)。
+//
+//	SSO 免登录 sso  — NAS_SID 会话 cookie → authLogin.cgi?sid= 校验 →
+//	                  本地用户映射 + 会话签发(POST /api/qnap/login);
+//	系统信息        — sysRequest.cgi get_system_info(GET /api/qnap/system);
+//	后端 API client — internal/qnapapi(loopback QTS CGI,会话凭据不出本机)。
 //
 // 诚实缺席(不造假开关):
-//   授权目录  — QTS 5.2 的 File Station 旧面(entry.cgi)已不可用,
-//               utilRequest.cgi 语义与官方文档漂移,待官方 API 稳定后接入;
-//   通知中心  — QTS 无面向 QPKG 的通知推送公开 API(log_tool 仅系统日志)。
+//
+//	授权目录  — QTS 5.2 的 File Station 旧面(entry.cgi)已不可用,
+//	            utilRequest.cgi 语义与官方文档漂移,待官方 API 稳定后接入;
+//	通知中心  — QTS 无面向 QPKG 的通知推送公开 API(log_tool 仅系统日志)。
 //
 // 降级语义:非 QNAP 环境(Docker/裸进程,本机无 QTS)一切自动关闭,
 // /api/qnap/capabilities 如实回报;PigeonBox 业务不受任何影响。
@@ -57,6 +59,9 @@ const probeTimeout = 3 * time.Second
 // Mount 在已启动的 PigeonBox Hertz server 上挂载 QNAP 集成。
 func Mount(h *server.Hertz, cfg Config) {
 	group := h.Group("/api/qnap")
+
+	// PigeonBeam 入口(A2):Box 会话守门的 /beam 跳转,独立于 QTS SSO 配置。
+	MountBeam(h)
 
 	// 探测端点:前端据此渲染 QNAP 联动 UI(任何环境都可用,不鉴权)。
 	group.GET("/capabilities", func(ctx context.Context, c *app.RequestContext) {
