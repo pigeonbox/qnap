@@ -174,7 +174,11 @@ check_process() {
 
 # p2pcweb 生命周期(A2):start 在 server 健康后拉起,stop 在 server 之前停。
 start_p2pcweb() {
-    [ -n "$P2PCWEB_BIN" ] && [ -f "$P2PCWEB_BIN" ] || { log_msg "p2pcweb binary missing, skip"; return 0; }
+    # SC2015 纪律:不用 A && B || C 形态(与看门狗/探活同款显式 if 风格)
+    if [ -z "$P2PCWEB_BIN" ] || [ ! -f "$P2PCWEB_BIN" ]; then
+        log_msg "p2pcweb binary missing, skip"
+        return 0
+    fi
     if check_process "$(cat "${P2PCWEB_PID_FILE}" 2>/dev/null)"; then
         return 0
     fi
@@ -199,7 +203,9 @@ stop_p2pcweb() {
             sleep 1
             _bc=$((_bc + 1))
         done
-        check_process "${_bpid}" && kill -KILL "${_bpid}" 2>/dev/null || true
+        if check_process "${_bpid}"; then
+            kill -KILL "${_bpid}" 2>/dev/null || true
+        fi
         log_msg "p2pcweb stopped (${_bpid})"
     fi
     rm -f "${P2PCWEB_PID_FILE}"
