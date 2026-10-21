@@ -17,11 +17,24 @@ on:
         required: true
         type: string
 
+concurrency:
+  # 手动 dispatch 重跑与 tag 自动触发可能并发写同一 Release(--clobber:先写者被
+  # 静默覆盖,不报错)。按目标版本分组串行;cancel-in-progress:false——发布中途
+  # 取消比排队更糟。键取目标版本而非 github.ref:dispatch 的 ref 是分支、
+  # tag 触发的 ref 是 tag,用 ref 分组等于没分组。
+  group: ${{ github.workflow }}-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+# 默认只读;真正要写本仓 Release 的作业在作业级单独开 contents: write
+permissions:
+  contents: read
+
 jobs:
   payload:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # 手动 dispatch 时按输入版本检出对应 tag,产物与 tag 严格一致
           ref: ${{ inputs.version || github.ref_name }}
@@ -34,11 +47,11 @@ jobs:
             grep -q "github.com/pigeonbox/core ${CORE_PIN}" go.mod || { echo "::error::go.mod core 钉版 ≠ DEPS.env CORE_PIN=${CORE_PIN}(列车 2.1.0 静默不一致实锤:DEPS 声称新钉而二进制实为旧 core 构建——版本幽灵守卫)"; exit 1; }
           fi
       # 前端自包含在本仓 web/(frontend-core tgz 钉版=web/package.json),无需读壳仓 ref
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.26"
           cache-dependency-path: go.sum
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: 原生产物构建(双架构二进制+前端,版本注入)
@@ -46,7 +59,7 @@ jobs:
           VERSION: ${{ inputs.version || github.ref_name }}
           COMMIT: ${{ github.sha }}
         run: ./scripts/build-native.sh
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: payload
           path: qpkg/
@@ -59,11 +72,12 @@ jobs:
       matrix:
         arch: [x86_64, arm_64]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.version || github.ref_name }}
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: payload
           path: qpkg/
@@ -71,7 +85,13 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq dos2unix rsync
-          git clone --depth 1 https://github.com/qnap-dev/QDK.git /tmp/QDK
+          # QDK 是第三方打包器,钉到具体提交——取分支头=每次构建拿到的可能是
+          # 不同工具版本(与 fnpack 同类问题:打包产物随第三方漂移)。
+          QDK_REF=b7b5f4c86ebe95b10a62d64725515e7cdcf4bb35
+          git init -q /tmp/QDK
+          git -C /tmp/QDK remote add origin https://github.com/qnap-dev/QDK.git
+          git -C /tmp/QDK fetch -q --depth 1 origin "$QDK_REF"
+          git -C /tmp/QDK checkout -q FETCH_HEAD
           (cd /tmp/QDK && sudo ./InstallToUbuntu.sh install)
       - name: qbuild 组包(tag v1.14.4 → QPKG_VER 1.14.4)
         run: |
@@ -99,7 +119,7 @@ jobs:
           # tar -tzf 对截断 gzip 仍可列出索引,单靠 grep 骗得过）
           QPKG_SIZE=$(stat -c%s "$QPKG")
           [ "$QPKG_SIZE" -ge 10485760 ] || { echo "::error::QPKG 仅 ${QPKG_SIZE}B(<10MB),疑似截断"; exit 1; }
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: qpkg-${{ matrix.arch }}
           path: |
@@ -112,14 +132,15 @@ jobs:
     if: github.event_name == 'push'
     needs: package
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: qpkg-x86_64
           path: rel
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: qpkg-arm_64
           path: rel
@@ -137,12 +158,13 @@ jobs:
   attach-to-hub:
     needs: package
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: qpkg-x86_64
           path: rel
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: qpkg-arm_64
           path: rel

@@ -15,7 +15,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: shellcheck
         run: |
           shellcheck qpkg/shared/pigeonbox.sh tests/run-tests.sh \
@@ -38,23 +38,27 @@ jobs:
   go-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.26"
           cache-dependency-path: go.sum
       - run: go test -race ./...
+      # 依赖漏洞门禁（govulncheck）：可达漏洞即红；修复策略=升依赖地板，不许注释绕过
+      # 与 p2p/fnos 门禁同形同钉版——qnap 此前是唯一漏了这道闸的 Go 仓
+      - name: Govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
   payload:
     # 原生产物一次构建(双架构静态二进制 + 前端 www),供运行冒烟与组包共用
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.26"
           cache-dependency-path: go.sum
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: web 类型检查(2026-10-09 前端拆仓:web/ 自包含,依赖 frontend-core tgz)
@@ -64,7 +68,7 @@ jobs:
           VERSION: 0.0.0-ci
           COMMIT: ci
         run: ./scripts/build-native.sh
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: payload
           path: qpkg/
@@ -76,8 +80,8 @@ jobs:
     needs: payload
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: payload
           path: qpkg/
@@ -116,8 +120,8 @@ jobs:
       matrix:
         arch: [x86_64, arm_64]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: payload
           path: qpkg/
@@ -125,7 +129,13 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq dos2unix rsync
-          git clone --depth 1 https://github.com/qnap-dev/QDK.git /tmp/QDK
+          # QDK 是第三方打包器,钉到具体提交——取分支头=每次构建拿到的可能是
+          # 不同工具版本(与 fnpack 同类问题:打包产物随第三方漂移)。
+          QDK_REF=b7b5f4c86ebe95b10a62d64725515e7cdcf4bb35
+          git init -q /tmp/QDK
+          git -C /tmp/QDK remote add origin https://github.com/qnap-dev/QDK.git
+          git -C /tmp/QDK fetch -q --depth 1 origin "$QDK_REF"
+          git -C /tmp/QDK checkout -q FETCH_HEAD
           (cd /tmp/QDK && sudo ./InstallToUbuntu.sh install)
       - name: qbuild 组包(CI 版本 0.0.0)
         run: |
@@ -152,7 +162,7 @@ jobs:
           tar -tzf /tmp/data.tar.gz | grep -q '^\./pigeonbox\.sh$'
           tar -tzf /tmp/data.tar.gz | grep -q '^\./env\.example$'
           tar -tzf /tmp/data.tar.gz | grep -q '^\./\.qpkg_icon\.gif$'
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: qpkg-${{ matrix.arch }}
           path: |
