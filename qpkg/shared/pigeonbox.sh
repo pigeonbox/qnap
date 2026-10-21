@@ -100,6 +100,12 @@ prepare_env() {
         . "${ENV_FILE}"
         set +a
     fi
+    # 首启逃逸门(2026-10-22 全生态统一, 与 openwrt procd 段同款): 未设管理员
+    # 密码时不播种弱口令 admin/admin123, 改走 /setup 首启向导(浏览器建号)。
+    # 为什么这样更安全: 弱口令可被扫描器猜到; 未初始化实例要有人刻意访问
+    # /setup 才能认领 —— 后者暴露面小得多。
+    # 已有实例零副作用: core 的 CreateDefaultAdmin 见到已有管理员直接返回。
+    [ -z "${PB_ADMIN_PASSWORD}" ] && export PB_DISABLE_DEFAULT_ADMIN=true
     mkdir -p "${PB_DATA_PATH}"
 }
 
