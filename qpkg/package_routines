@@ -29,8 +29,11 @@ pkg_pre_install() {
     # 判据用 `tar -tzf` 列表:2026-10-22 QNAP 真机实测 —— 完整包 exit 0、
     # **尾部多余字节也 exit 0**(包头脚本在 python 缺失时不截尾,会多出 832 字节
     # padding,不能因此误判)、截断包 exit 2 ⇒ 只有真断流才会拦。
-    _payload="${SYS_EXTRACT_DIR}/data.tar.gz"
-    if [ -f "$_payload" ] && command -v tar >/dev/null 2>&1; then
+    # SYS_EXTRACT_DIR 在真实 QDK 流程里由包头脚本设定(= 解包目录);测试 mock
+    # 不设 ⇒ 用 :- 兜底为空(跳过校验),否则 set -u 下 mock 会报
+    # "parameter not set"(2026-10-22 实弹:lint 作业因此红、bump PR 卡住)。
+    _payload="${SYS_EXTRACT_DIR:-}/data.tar.gz"
+    if [ -n "${SYS_EXTRACT_DIR:-}" ] && [ -f "$_payload" ] && command -v tar >/dev/null 2>&1; then
         if ! tar -tzf "$_payload" >/dev/null 2>&1; then
             "$WRITE_LOG" "PigeonBox 安装中止：安装包不完整（data.tar.gz 校验失败，疑似下载中断）——请重新下载完整安装包后再安装（已装版本未被覆盖）" 2
             echo "Installation Abort."
