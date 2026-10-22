@@ -180,6 +180,39 @@ else
     fail ".env 权限非 600"
 fi
 
+echo "── Q5c pkg_pre_install:截断安装包在**解包前**被拦下(旧安装原封不动)"
+# 复刻 2026-10-22 真机事故:下载截断 ⇒ 包头脚本切出的 data.tar.gz 是断流 ⇒
+# 解包会在写最后一个文件时断流 ⇒ 半拉子安装(p2pcweb 段错误 + 看门狗崩溃循环)。
+# 修法:pkg_pre_install 在解包前校验 tar 流完整性 ⇒ 截断包当场中止安装。
+_bad_extract="$TMP/extract-bad"
+_ok_extract="$TMP/extract-ok"
+mkdir -p "$_bad_extract" "$_ok_extract" "$TMP/tarsrc"
+# 造一个**合法** tar.gz,再截断它(复刻真机事故:包头脚本从被截断的安装包里
+# 切出的 data.tar.gz 就是断流)。合法 tar.gz 必须能被 tar -tzf 列出 ⇒ 夹具
+# 不能只压个 gzip(那不是 tar 归档,会被当成坏包误拦)。
+: > "$TMP/tarsrc/file.txt"
+( cd "$TMP/tarsrc" && tar -czf "$_ok_extract/data.tar.gz" file.txt )
+head -c 20 "$_ok_extract/data.tar.gz" > "$_bad_extract/data.tar.gz"
+# 造一个"已装内容"标记:截断包中止时它必须原封不动(前置检查的意义)
+mkdir -p "$PKGROOT/www"
+: > "$PKGROOT/www/keep-me.txt"
+if ( SYS_EXTRACT_DIR="$_bad_extract" pkg_pre_install ) >/dev/null 2>&1; then
+    fail "截断包未被拦下(应中止安装)"
+else
+    ok "截断包在解包前被拦下(安装中止)"
+fi
+if [ -f "$PKGROOT/www/keep-me.txt" ]; then
+    ok "截断包中止后已装内容未被覆盖"
+else
+    fail "截断包中止后仍动了已装内容"
+fi
+# 反向:完整包不得被误拦(尾部多余字节也算完整——包头脚本 python 缺失时不截尾)
+if ( SYS_EXTRACT_DIR="$_ok_extract" pkg_pre_install ) >/dev/null 2>&1; then
+    ok "完整包未被误拦"
+else
+    fail "完整包被误拦(不应中止安装)"
+fi
+
 echo "── Q6 pkg_post_install:Docker 旧版升级清理死配置,用户配置保留"
 printf 'PB_SERVER_PORT=8080\nPB_ADMIN_PASSWORD="secret"\nFCB_API_PORT=12345\nFCB_IMAGE_TAG=v0.15.7\nPB_IMAGE_TAG=v0.15.7\nPB_API_BIND=0.0.0.0\nPB_MAX_BODY_SIZE=1024m\nTZ=Asia/Shanghai\n' > "$APP_DIR/.env"
 pkg_post_install
