@@ -14,6 +14,19 @@ DEF_SHARE="${FCB_DEF_SHARE_INFO:-/etc/config/def_share.info}"
 pkg_pre_install() {
     # 装完即启:qinstall.sh 按此变量决定安装完成后是否调用服务脚本 start
     SYS_QPKG_SERVICE_ENABLED="TRUE"
+
+    # 升级时清掉上一版的前端产物(QDK 原地升级只覆盖、不删除旧文件)。
+    # 为什么要清:vite 产物文件名带内容哈希,新版文件名必然不同 ⇒ 旧 chunk
+    # 会与新 chunk **共存**在 www/assets/。运行时不可达(入口 index.html 指向
+    # 新 index-*.js),但:
+    #   ① 安装目录凭空多出上一版的死资源(实测 2.1.0→3.0.0 残留 530KB);
+    #   ② 旧 chunk 里**还带着已退役功能的代码**(Wave B' 删掉的直传控制台
+    #      及其 /admin/p2p/status|tasks|send|recv|publish 调用)——发布目录里
+    #      留着退役功能的实现,与「破坏性拆除」的语义不符。
+    # 时机安全:qinstall.sh 在 stop_service 之后、解包(extract_data)之前调用
+    # 本钩子,此时服务已停;业务数据(SQLite/上传文件/JWT 密钥)在卷根
+    # <volume>/pigeonbox/,**不在 www 下**,不受影响。
+    rm -rf "${SYS_QPKG_DIR}/www" 2>/dev/null || true
 }
 
 pkg_post_install() {

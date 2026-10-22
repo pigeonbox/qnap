@@ -161,6 +161,19 @@ assert_not_contains "无镜像钉版行"       "$(cat "$APP_DIR/.env")" "PB_IMAG
 assert_not_contains "无 FCB_ 前缀行"     "$(cat "$APP_DIR/.env")" "^FCB_"
 assert_count    "PORT 恰好一行"          "$(cat "$APP_DIR/.env")" "^PB_SERVER_PORT="
 if find "$APP_DIR/data" -maxdepth 0 >/dev/null 2>&1; then ok "data 目录已建"; else fail "data 目录未建"; fi
+
+echo "── Q5b pkg_pre_install:升级清旧前端产物(不留上一版死 chunk)"
+# 造上一版的残留:vite 产物文件名带内容哈希,新版文件名必然不同 ⇒ 旧 chunk 与
+# 新 chunk 共存。升级须在解包前把 www 清空(数据目录不在 www 下,不受影响)。
+mkdir -p "$PKGROOT/www/assets"
+: > "$PKGROOT/www/assets/P2pTransfer-OLDHASH.js"
+: > "$PKGROOT/www/assets/main-OLDHASH.js"
+printf '3.0.0' > "$PKGROOT/www/version.txt"
+mkdir -p "$APP_DIR/data"
+: > "$APP_DIR/data/fileCodeBox.db"
+pkg_pre_install
+if [ -d "$PKGROOT/www" ]; then fail "升级后旧 www 未清(上一版死 chunk 会残留)"; else ok "升级前旧 www 已清"; fi
+if [ -f "$APP_DIR/data/fileCodeBox.db" ]; then ok "业务数据未受影响(数据不在 www 下)"; else fail "业务数据被误删"; fi
 if find "$APP_DIR/.env" -maxdepth 0 -perm 0600 >/dev/null 2>&1; then
     ok ".env 权限 600"
 else
