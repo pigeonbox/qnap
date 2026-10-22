@@ -15,6 +15,29 @@ pkg_pre_install() {
     # 装完即启:qinstall.sh 按此变量决定安装完成后是否调用服务脚本 start
     SYS_QPKG_SERVICE_ENABLED="TRUE"
 
+    # ── 安装包完整性前置检查(2026-10-22 真机事故固化)────────────────────
+    # QDK 的包头脚本用 dd 从安装包自身切出 data.tar.gz 再解包;若安装包本身
+    # 被截断(下载中断),切出来的 tar 流也是断的,解包会在写**最后一个文件**时
+    # 断流 ⇒ 产出「看起来装上了、实则二进制被截断」的半拉子安装(本次:p2pcweb
+    # 9994402→6218752 字节,而 p2pc/pigeonbox 校验和**完全正常**;症状是 p2pcweb
+    # 段错误 + 看门狗每 30s 重拉的崩溃循环,安装期没有任何环节报过错)。
+    #
+    # 本钩子跑在**解包之前**(QDK 顺序:stop_service → pkg_pre_install →
+    # extract_data),所以在这里校验 tar 流完整性 ⇒ 截断包当场中止安装,
+    # **不会把用户已有的安装覆盖成半拉子**(失败时旧文件原封不动,只需重下包)。
+    #
+    # 判据用 `tar -tzf` 列表:2026-10-22 QNAP 真机实测 —— 完整包 exit 0、
+    # **尾部多余字节也 exit 0**(包头脚本在 python 缺失时不截尾,会多出 832 字节
+    # padding,不能因此误判)、截断包 exit 2 ⇒ 只有真断流才会拦。
+    _payload="${SYS_EXTRACT_DIR}/data.tar.gz"
+    if [ -f "$_payload" ] && command -v tar >/dev/null 2>&1; then
+        if ! tar -tzf "$_payload" >/dev/null 2>&1; then
+            "$WRITE_LOG" "PigeonBox 安装中止：安装包不完整（data.tar.gz 校验失败，疑似下载中断）——请重新下载完整安装包后再安装（已装版本未被覆盖）" 2
+            echo "Installation Abort."
+            exit 1
+        fi
+    fi
+
     # 升级时清掉上一版的前端产物(QDK 原地升级只覆盖、不删除旧文件)。
     # 为什么要清:vite 产物文件名带内容哈希,新版文件名必然不同 ⇒ 旧 chunk
     # 会与新 chunk **共存**在 www/assets/。运行时不可达(入口 index.html 指向
