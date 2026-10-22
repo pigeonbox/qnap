@@ -82,6 +82,21 @@ else
   echo "    (DEPS.env 无 P2PC_REF,跳过——包内直传不可用,优雅降级)"
 fi
 
+# ── 安装完整性自检清单(2026-10-22 真机事故固化) ──────────────────────
+# QDK 的 dd|tar 解包在写**最后一个文件**时可能断流(安装包被截断/传输中断),
+# 产出「看起来装上了、实则二进制被截断」的半拉子安装——本次事故:p2pcweb
+# 截到 62%(9994402→6218752 字节),p2pc/pigeonbox 两个校验和完全正常,
+# 症状却是 p2pcweb 段错误 + 看门狗每 30s 重拉的崩溃循环。
+# 这里在打包期产出 bin/SHA256SUMS,安装后由 package_routines 的 pkg_post_install
+# 逐个校验:不符即**中止安装**,让用户看到明确失败,而不是几天后的一段段错误。
+echo "==> 生成 bin/SHA256SUMS(安装后完整性自检清单)"
+for qarch in x86_64 arm_64; do
+  _bindir="$QPKG_DIR/${qarch}/bin"
+  [ -d "$_bindir" ] || continue
+  ( cd "$_bindir" && rm -f SHA256SUMS && sha256sum ./* > SHA256SUMS )
+  echo "    ✓ ${qarch}/bin/SHA256SUMS"
+done
+
 echo "==> 构建前端 dist → $QPKG_DIR/shared/www"
 rm -rf "$QPKG_DIR/shared/www"
 if [ -n "${FRONTEND_DIST:-}" ]; then

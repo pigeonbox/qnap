@@ -59,6 +59,35 @@ pkg_post_install() {
             "$_env" && rm -f "${_env}.bak"
     fi
 
+    # ── 安装完整性自检(2026-10-22 真机事故固化)────────────────────────
+    # QDK 的 dd|tar 解包在写**最后一个文件**时可能断流(安装包被截断/传输中断),
+    # 产出「看起来装上了、实则二进制被截断」的半拉子安装——本次事故:
+    # p2pcweb 被截到 62%(9994402→6218752 字节),而 p2pc/pigeonbox 两个二进制
+    # 校验和**完全正常**,症状却是 p2pcweb 段错误(exit 139)+ 看门狗每 30s 重拉
+    # 的崩溃循环。安装期没有任何环节报过错(只留一句 "Installation Abort.")。
+    # 包内带 bin/SHA256SUMS(构建期产出),这里逐个核对:不符即**中止安装**并写
+    # 响亮日志,让用户看到明确失败,而不是几天后的一段段错误。
+    _sums="${SYS_QPKG_DIR}/bin/SHA256SUMS"
+    if [ -f "$_sums" ] && command -v sha256sum >/dev/null 2>&1; then
+        _bad=""
+        while read -r _sum _name; do
+            [ -n "${_sum:-}" ] || continue
+            case "$_sum" in \#*) continue ;; esac
+            _f="${SYS_QPKG_DIR}/bin/${_name#./}"
+            if [ ! -f "$_f" ]; then
+                _bad="${_bad} ${_name}(缺失)"
+                continue
+            fi
+            _act=$(sha256sum "$_f" 2>/dev/null | cut -d' ' -f1)
+            [ "$_act" = "$_sum" ] || _bad="${_bad} ${_name}(校验不符)"
+        done < "$_sums"
+        if [ -n "$_bad" ]; then
+            "$WRITE_LOG" "PigeonBox 安装失败：bin/ 完整性校验不通过${_bad} —— 安装包可能不完整(下载中断)，请重新下载完整安装包后再安装" 2
+            echo "Installation Abort."
+            exit 1
+        fi
+    fi
+
     "$WRITE_LOG" "PigeonBox ${QPKG_VER:-} installed(native); data at ${_appdir}" 4
 }
 
