@@ -43,10 +43,18 @@ jobs:
         with:
           go-version: "1.26"
           cache-dependency-path: go.sum
+      # gofmt 门禁（2026-10-24 补）：此前 qnap 仓的 CI **没有 gofmt 步**
+      # （core/server/p2p/contracts/fnos/openwrt 早已有）⇒ 格式漂移无人拦。
+      # **发现即红，修法是 gofmt -w**，不设豁免。
+      - name: Gofmt
+        if: always()
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go test -race ./...
+        if: always()
       # 依赖漏洞门禁（govulncheck）：可达漏洞即红；修复策略=升依赖地板，不许注释绕过
       # 与 p2p/fnos 门禁同形同钉版——qnap 此前是唯一漏了这道闸的 Go 仓
       - name: Govulncheck
+        if: always()
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
   payload:
