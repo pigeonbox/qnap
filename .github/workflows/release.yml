@@ -47,7 +47,7 @@ jobs:
             grep -q "github.com/pigeonbox/core ${CORE_PIN}" go.mod || { echo "::error::go.mod core 钉版 ≠ DEPS.env CORE_PIN=${CORE_PIN}(列车 2.1.0 静默不一致实锤:DEPS 声称新钉而二进制实为旧 core 构建——版本幽灵守卫)"; exit 1; }
           fi
       # 前端自包含在本仓 web/(frontend-core tgz 钉版=web/package.json),无需读壳仓 ref
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26"
           cache-dependency-path: go.sum
