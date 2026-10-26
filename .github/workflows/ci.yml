@@ -37,11 +37,16 @@ jobs:
 
   go-test:
     runs-on: ubuntu-latest
+    env:
+      # 显式 auto：覆盖 setup-go v7 强制的 GOTOOLCHAIN=local ⇒ 将来 go.mod 的
+      # toolchain 地板再抬时，Go 能自动拉取而不是构建失败（2026-10-26 实测：
+      # 浮动 go-version 拿到低于地板的 patch ⇒ 直接构建失败，门禁变噪声）。
+      GOTOOLCHAIN: auto
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: "1.26"
+          go-version: "1.26.10"
           cache-dependency-path: go.sum
       # gofmt 门禁（2026-10-24 补）：此前 qnap 仓的 CI **没有 gofmt 步**
       # （core/server/p2p/contracts/fnos/openwrt 早已有）⇒ 格式漂移无人拦。
@@ -60,11 +65,16 @@ jobs:
   payload:
     # 原生产物一次构建(双架构静态二进制 + 前端 www),供运行冒烟与组包共用
     runs-on: ubuntu-latest
+    env:
+      # 显式 auto：覆盖 setup-go v7 强制的 GOTOOLCHAIN=local ⇒ 将来 go.mod 的
+      # toolchain 地板再抬时，Go 能自动拉取而不是构建失败（2026-10-26 实测：
+      # 浮动 go-version 拿到低于地板的 patch ⇒ 直接构建失败，门禁变噪声）。
+      GOTOOLCHAIN: auto
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: "1.26"
+          go-version: "1.26.10"
           cache-dependency-path: go.sum
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:

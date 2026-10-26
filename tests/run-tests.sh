@@ -284,6 +284,31 @@ else
     fail "stop 后进程被重新拉起"
 fi
 
+echo "── Q11 .env 端口为空串 ⇒ 必须回退默认端口"
+# 缺陷实录（2026-10-26 审计 P2，对齐 fnos 侧已实锤修过的同一处）：
+# prepare_env 里 `export PB_SERVER_PORT="${PB_SERVER_PORT:-12345}"` 的兜底发生在
+# source .env **之前** ⇒ .env 里写了空的 PB_SERVER_PORT=（用户可编辑；升级保留旧值）
+# ⇒ source 把端口覆盖成空串 ⇒ 探活 URL 变成 "http://127.0.0.1:/ping" 恒失败
+# ⇒ 看门狗连续 3 次失败即 kill 重启 ⇒ **每 90s 强杀重启，永远起不来**。
+# 判据：端口必须回退到 12345（图标端口被 setcfg 同步 + 启动日志里的端口非空）。
+printf 'PB_SERVER_PORT=\nPB_ADMIN_PASSWORD="secret"\n' > "$APP_DIR/.env"
+rm -f "$SETCFG_LOG"
+: > "$APP_DIR/pigeonbox.log"
+sh qpkg/shared/pigeonbox.sh start
+# start 走后台引导(子进程)⇒ 断言要等而非即查
+if wait_for 15 "$SETCFG_LOG" "Web_Port 12345"; then
+    ok "Q11 空串端口回退到 12345(图标端口已同步)"
+else
+    fail "Q11 空串端口未回退" "setcfg 日志=$(tr '\n' ' ' < "$SETCFG_LOG" 2>/dev/null)"
+fi
+if wait_for 15 "$APP_DIR/pigeonbox.log" "on port 12345"; then
+    ok "Q11b 启动日志里的端口非空且为 12345"
+else
+    fail "Q11b 启动日志端口不对" "$(grep -o 'on port.*' "$APP_DIR/pigeonbox.log" 2>/dev/null | tail -1)"
+fi
+# 收尾:停掉本轮起的进程(后续 Q10 要干净场)
+sh qpkg/shared/pigeonbox.sh stop >/dev/null 2>&1
+
 echo "── Q10 卸载钩子字符串按 source 时变量展开(具体路径;最后跑,钩内 unset 清场)"
 cp qpkg/shared/pigeonbox.sh "$PKGROOT/pigeonbox.sh"
 chmod +x "$PKGROOT/pigeonbox.sh"
