@@ -76,6 +76,27 @@ PigeonBox（文件快递柜，匿名口令分享文本/文件）的 **威联通 
 - 备份 = Hybrid Backup Sync / File Station 复制该目录（停止应用后拷贝最干净）
 - **卸载应用默认保留**该目录；确认不要了在 File Station 手动删除
 
+## 命令行客户端（pb）
+
+QPKG 随包附带官方命令行客户端 **pb**（`bin/pb-linux-*`，在应用目录内），用于自检当前实例：
+
+```sh
+# 进应用目录后执行（路径按实际架构选 amd64 / arm64）
+cd /share/Container/PigeonBox/bin   # 或你的 QPKG 安装目录
+./pb-linux-amd64 doctor
+```
+
+`doctor` 会检查服务版本、部署模式、数据库、存储后端、Redis、站点公网地址、首启状态、
+被降级的能力与时钟偏差。
+
+> **深度检查需要 admin 的 API Key**：在管理台「用户中心 → API 令牌」创建后执行
+> ```sh
+> PB_API_KEY=pb_sk_xxx ./pb-linux-amd64 doctor
+> ```
+> 未设置 Key 时仍会做**公开面检查**（服务可达等），并明确标注「深度检查未执行」。
+
+> pb 的版本与包内服务端**同号**（同一趟发布列车产出）⇒ 不会出现「客户端比服务端新」的错配。
+
 ## 常见问题
 
 - **装完图标点开端口不对**：图标端口在服务启动时自动同步 `.env` 的 `PB_SERVER_PORT`；刚改完配置重启一次应用即可
