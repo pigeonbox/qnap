@@ -40,7 +40,8 @@ wait_for() { # <超时秒> <文件> <grep 模式>
 }
 
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+OK=0
+trap 'rc=$?; rm -rf "$TMP"; if [ "$rc" -ne 0 ]; then exit $rc; fi; if [ "${OK:-0}" != 1 ]; then exit 1; fi; exit 0' EXIT
 
 SETCFG_LOG="$TMP/setcfg.log" # setcfg 调用记录
 
@@ -327,7 +328,9 @@ unset pkg_pre_install pkg_post_install PKG_PRE_REMOVE PKG_MAIN_REMOVE PKG_POST_R
 echo
 if [ "$FAIL" -eq 0 ]; then
     echo "✓ 全部通过"
+    OK=1
     exit 0
 fi
 echo "✗ ${FAIL} 项失败"
 exit 1
+OK=1
