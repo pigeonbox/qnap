@@ -112,7 +112,7 @@ fi
 #   在 GitHub 上不存在 ⇒ 检出必然失败(fnos#145 已在 CI 上踩过这个坑)。
 PB_SERVER_REF="${PB_SERVER_REF:-}"
 if [ -z "$PB_SERVER_REF" ]; then
-  _pb_ver="$(cat "$ROOT/VERSION" 2>/dev/null | tr -d " \r\n")"
+  _pb_ver="$(tr -d " \r\n" < "$ROOT/VERSION" 2>/dev/null || true)"
   if [ -n "$_pb_ver" ]; then
     PB_SERVER_REF="v${_pb_ver}"
   else
@@ -152,7 +152,9 @@ done
 if [ "$_pb_ok" = "1" ] && ! ls "$QPKG_DIR"/*/bin/pb-linux-* >/dev/null 2>&1; then
   echo "    ✗ pb 两个架构均不可用——优雅降级(包内无 pb,应用照常)"
 fi
-[ -n "$PB_SRC" ] && rm -rf "$(dirname "$PB_SRC")" 2>/dev/null || true
+if [ -n "$PB_SRC" ]; then
+  rm -rf "$(dirname "$PB_SRC")" 2>/dev/null || true
+fi
 
 # ── 安装完整性自检清单(2026-10-22 真机事故固化) ──────────────────────
 # QDK 的 dd|tar 解包在写**最后一个文件**时可能断流(安装包被截断/传输中断),
