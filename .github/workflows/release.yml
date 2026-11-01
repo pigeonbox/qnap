@@ -56,7 +56,7 @@ jobs:
         with:
           go-version: "1.26.10"
           cache-dependency-path: go.sum
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
       - name: 原生产物构建(双架构二进制+前端,版本注入)
@@ -74,7 +74,7 @@ jobs:
       #     ⇒ 这里才是「**发布出去的包必须含 pb**」的真正断言点。
       - name: pb CLI 随包门禁（发布流水线硬断言）
         run: PB_REQUIRED=1 bash scripts/check-pb-in-qpkg.sh
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: payload
           path: qpkg/
@@ -134,7 +134,7 @@ jobs:
           # tar -tzf 对截断 gzip 仍可列出索引,单靠 grep 骗得过）
           QPKG_SIZE=$(stat -c%s "$QPKG")
           [ "$QPKG_SIZE" -ge 10485760 ] || { echo "::error::QPKG 仅 ${QPKG_SIZE}B(<10MB),疑似截断"; exit 1; }
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: qpkg-${{ matrix.arch }}
           path: |
