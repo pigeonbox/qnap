@@ -130,8 +130,23 @@ for goarch in amd64 arm64; do
   if [ -z "$PB_SRC" ]; then
     PB_SRC="$(mktemp -d)/server"
     echo "    检出 server ${PB_SERVER_REF} 源码"
-    if ! git clone -q --depth 1 --branch "$PB_SERVER_REF" \
-         https://github.com/pigeonbox/server.git "$PB_SRC" 2>/dev/null; then
+    # 检出 server 同号 tag 的源码；失败则**退避重试**——
+    # server 的 tag 可能比本仓的 tag 晚几秒可见（两仓 tag 由列车分批推送：
+    # frontend → server → 各终端）⇒ 重试即可覆盖这个窗口。
+    #
+    # 失败模式是**静默降级**（检出失败 ⇒ 不带 pb ⇒ 应用照常可用 ⇒ 只有门禁会发现）
+    # ⇒ 没有重试就意味着「这一趟车的包没有 pb」。
+    _pb_try=0
+    while [ "$_pb_try" -lt 10 ]; do
+      _pb_try=$((_pb_try + 1))
+      if git clone -q --depth 1 --branch "$PB_SERVER_REF" \
+           https://github.com/pigeonbox/server.git "$PB_SRC" 2>/dev/null; then
+        break
+      fi
+      echo "    … server ${PB_SERVER_REF} 源码尚未可见（第 ${_pb_try} 次），3s 后重试"
+      sleep 3
+    done
+    if [ ! -d "$PB_SRC/.git" ]; then
       echo "    ✗ server ${PB_SERVER_REF} 源码检出失败——pb 优雅降级(包内无 pb)"
       _pb_ok=0
       break
