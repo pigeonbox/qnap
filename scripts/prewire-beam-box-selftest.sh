@@ -18,7 +18,12 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PREWIRE="$SCRIPT_DIR/../fnos/cmd/prewire_beam_box"
+# ⚠️ **指向本仓自己的脚本**（qpkg/shared/prewire_beam_box）。
+#   此前误写成 fnos 仓的相对路径（../fnos/cmd/prewire_beam_box）——
+#   那是 **fnos 仓**的布局，在 qnap 仓里**不存在** ⇒ 脚本压根没跑起来
+#   ⇒ 8 条判据全灭、负对照的 sed 也读不到文件 ⇒ 「变异无效，判据无牙齿」。
+#   ⇒ 症状看着像「判据没牙齿」，实为**自测自身失效**（路径指错）。
+PREWIRE="$SCRIPT_DIR/../qpkg/shared/prewire_beam_box"
 
 fails=0
 note_fail() { echo "  ✗ $1"; fails=$((fails + 1)); }
