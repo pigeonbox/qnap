@@ -209,6 +209,28 @@ start_p2pcweb() {
     printf "%s" "$!" >"${P2PCWEB_PID_FILE}"
 }
 
+# PigeonBeam 出厂预接线(roadmap §3.1 的真实缺口):把 Box 地址 + 一把专用
+# API Key 预置进 p2pcweb ⇒ 用户打开 Beam 的「文件柜」tab **不再需要手填**。
+# 失败**不阻断**(优雅降级):Beam 退化为「手填」旧行为,Box 照常可用。
+prewire_beam_box() {
+    _prewire_script="$(cd "$(dirname "$0")" && pwd)/prewire_beam_box"
+    if [ ! -f "$_prewire_script" ]; then
+        log_msg "beam prewire: script missing, skip"
+        return 0
+    fi
+    # 等 p2pcweb 写出令牌文件(它自持写入,首启可能慢一拍)
+    _waited=0
+    while [ ! -s "${PB_DATA_PATH}/.p2pcweb_token" ] && [ "$_waited" -lt 10 ]; do
+        sleep 1
+        _waited=$((_waited + 1))
+    done
+    _out="$(bash "$_prewire_script" 2>&1)"
+    if [ -n "$_out" ]; then
+        log_msg "beam prewire: $(printf '%s' "$_out" | tr '\n' ' ')"
+    fi
+    return 0
+}
+
 stop_p2pcweb() {
     [ -f "${P2PCWEB_PID_FILE}" ] || return 0
     _bpid=$(head -n 1 "${P2PCWEB_PID_FILE}" 2>/dev/null | tr -d '[:space:]')
@@ -269,6 +291,8 @@ start_process() {
     start_watchdog
     # PigeonBeam 网页客户端随主服务拉起(A2;失败不阻断主服务)
     start_p2pcweb
+    # 出厂预接线:Box 地址 + 专用 API Key 预置给 Beam（失败不阻断）
+    prewire_beam_box
     return 0
 }
 
