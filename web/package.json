@@ -12,7 +12,7 @@
     "@pigeonbox/frontend-core": "https://github.com/pigeonbox/frontend-core/releases/download/v0.11.48/pigeonbox-frontend-core-0.11.48.tgz"
   },
   "devDependencies": {
-    "@types/node": "^24.12.0",
+    "@types/node": "^26.6.6",
     "@types/qrcode": "^1.5.6",
     "@types/swagger-ui-dist": "^3.30.6",
     "@vitejs/plugin-vue": "^6.0.2",
