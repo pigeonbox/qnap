@@ -218,16 +218,10 @@ prewire_beam_box() {
         log_msg "beam prewire: script missing, skip"
         return 0
     fi
-    # 等 p2pcweb 写出令牌文件(它自持写入,首启可能慢一拍)
-    _waited=0
-    while [ ! -s "${PB_DATA_PATH}/.p2pcweb_token" ] && [ "$_waited" -lt 10 ]; do
-        sleep 1
-        _waited=$((_waited + 1))
-    done
-    _out="$(bash "$_prewire_script" 2>&1)"
-    if [ -n "$_out" ]; then
-        log_msg "beam prewire: $(printf '%s' "$_out" | tr '\n' ' ')"
-    fi
+    # ⚠️ **后台执行**:脚本自己会等 Box / p2pcweb 就绪(最多 30s)
+    #   ⇒ 前台调用会把包启动**阻塞** ⇒ 极端情况下触发 QPKG 启动超时。
+    nohup bash "$_prewire_script" >>"${LOG_FILE}" 2>&1 &
+    log_msg "beam prewire: started (background; waits for Box + p2pcweb readiness)"
     return 0
 }
 
