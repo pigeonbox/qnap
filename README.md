@@ -66,7 +66,7 @@ PigeonBox（文件快递柜，匿名口令分享文本/文件）的 **威联通 
 2. `touch /share/CACHEDEV1_DATA/pigeonbox/.admin_reset`（卷根 `pigeonbox/` 目录旁）
 3. App Center 停止→启动应用
 
-启动时自动删除 admin 账号并按新密码重建（全程审计在 `pigeonbox/data/.admin_reset.log`，重置成功后 `.env` 中的明文密码自动清空）。忘记密码走同样流程。
+启动时**原地重置**管理员口令（core 改 bcrypt 哈希，**admin 账号 id 不变** ⇒ 名下分享/API Key 不会变成孤儿；全程审计在 `pigeonbox/data/.admin_reset.log`）。`.env` 中的明文密码会与新口令对齐（**不再清空**）——Beam 出厂预接线靠它做「Key 失效后重建」的自愈。忘记密码走同样流程。
 
 更多高级项（存储后端切换、联邦等）见生态主仓 [ENVIRONMENT_VARIABLES.md](https://github.com/pigeonbox/pigeonbox/blob/main/docs/ENVIRONMENT_VARIABLES.md)；高级用户可在卷根 `pigeonbox/` 放置 `config.yaml`（服务脚本检测到即启用，env 优先级始终更高）。
 

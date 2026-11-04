@@ -1,26 +1,37 @@
-// Package adminreset 消费管理员密码重置请求(.admin_reset 标记机制)。
+// Package adminreset 消费管理员口令重置请求(.admin_reset 标记机制)。
 //
-// 语义对齐 fnos v1.14.3(壳层 python3+sqlite3 实现):标记存在且
-// PB_ADMIN_PASSWORD 非空时删除 users 表 admin 行——core 启动语义为
-// 「库中无管理员时按 PB_ADMIN_PASSWORD 重建」,故紧随的进程启动即以
-// 新密码完成重置。QTS 不保证 python3/sqlite3 CLI,故复用 core 同款
-// glebarez 纯 Go sqlite 驱动:blank import 与 core 经 gorm 链到的是
-// 同一个包实例,驱动只注册一次,零新增外部依赖。
+// 2026-11-04（fnos#182 同源修复）：**不再删 users 表 admin 行**。
+//
+//	旧语义:删 admin 行 → core 启动时按 PB_ADMIN_PASSWORD 重建
+//	  ⇒ admin 的 **user id 变化** ⇒ 名下 file_codes / user_api_keys 全部成孤儿
+//	  （真机 88 份分享 + 3 把 Key;过程无任何告警,只有数据悄悄失去归属）。
+//	新语义:平台层**彻底不碰数据库**,只把新口令一次性投递给 core
+//	  （PB_ADMIN_PASSWORD_RESET_FILE）⇒ core **原地**改 bcrypt 哈希
+//	  ⇒ user id 不变 ⇒ 名下数据归属不变;旧 API Key 继续有效;旧 JWT 失效。
+//
+// 附带修掉的次生缺陷:旧实现在消费标记后把 .env 里的明文口令**清空**
+// ⇒ prewire_beam_box 的「每次启动校验有效性、失效才重建」只剩第一次生效。
+// ⇒ 现在 .env 里的口令与 admin 口令保持**一致**（且绝不被清空）。
+//
+// QTS 不保证 python3/sqlite3 CLI —— 新实现**连数据库都不碰**（零驱动依赖）。
 package adminreset
 
 import (
-	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
-
-	// 与 core(gorm 经 glebarez/sqlite)链接同一驱动包:driver 名 "sqlite"
-	// 在 core 侧已注册,此处显式引用仅为表达直接依赖,不产生二次注册。
-	_ "github.com/glebarez/go-sqlite"
 )
 
-const adminUser = "admin"
+const (
+	// EnvAdminPasswordResetFile core 侧消费一次性重置文件的环境变量名。
+	// 与 core bootstrap.EnvAdminPasswordResetFile 同名（core 是消费方）。
+	EnvAdminPasswordResetFile = "PB_ADMIN_PASSWORD_RESET_FILE"
+	// resetFileName 数据目录下的一次性重置文件名（core 消费后即删除）。
+	resetFileName = ".admin_password_reset"
+)
 
 var envPasswordLine = regexp.MustCompile(`(?m)^PB_ADMIN_PASSWORD=.*$`)
 
@@ -30,69 +41,105 @@ func Requested(marker string) bool {
 	return err == nil
 }
 
-// Consume 消费一次密码重置请求,返回是否已消费。
+// Prepare 消费一次密码重置请求:把新口令**原地**投递给 core。
 //
-//   - 标记不存在          → (false, nil)
-//   - 密码为空            → 保留标记 + 审计日志,待下次启动(不视为错误)
-//   - 业务库不存在        → 直接消费(core 首启将按 PB_ADMIN_PASSWORD 播种 admin,重置语义已达成)
-//   - 删除 SQL 失败       → 保留标记待下次启动重试,返回错误(调用方记日志,不阻断启动)
+// 参数:
 //
-// 成功:删 admin 行 → 移除标记 → 追加审计日志 → 清除 .env 明文密码。
-// 注意只清文件不清环境变量——紧随其后的本次启动仍凭已导出的 env 完成 admin 重建。
-func Consume(dbPath, marker, envFile, auditLog, password string) (bool, error) {
-	if !Requested(marker) {
-		return false, nil
+//	marker    待消费的重置标记（PB_APP_HOME/.admin_reset）
+//	dataDir   数据目录（PB_DATA_PATH）——一次性重置文件落这里
+//	envFile   .env（平台凭据文件）——口令对齐到新值
+//	auditLog  审计日志路径
+//	password  新的管理员口令（来自 PB_ADMIN_PASSWORD）
+//
+// 返回（是否**投递了**重置, 错误）。
+//
+// 语义:
+//   - 标记不存在        → (false, nil);但若已有待消费的重置文件,仍导出路径
+//     （「上次启动没成功」的补投:文件由 core 消费后删除,天然一次性）。
+//   - 口令为空          → 保留标记 + 审计日志,待下次启动（不视为错误）。
+//   - 投递失败          → 保留标记待下次启动重试,返回错误（调用方记日志,不阻断启动）。
+//   - 投递成功          → 移除标记 → 写审计日志 → 把 .env 口令对齐到新值。
+func Prepare(marker, dataDir, envFile, auditLog, password string) (bool, error) {
+	staged := false
+	if Requested(marker) {
+		if password == "" {
+			audit(auditLog, "reset requested but PB_ADMIN_PASSWORD empty; keep marker")
+			return false, nil
+		}
+		if err := stageResetFile(dataDir, password); err != nil {
+			audit(auditLog, "reset staging failed: "+err.Error())
+			return false, err // 保留标记 ⇒ 下次启动重试
+		}
+		if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+			audit(auditLog, "reset staged but marker removal failed: "+err.Error())
+		}
+		audit(auditLog, "admin password reset staged (core applies it in place on startup; user id preserved)")
+		syncEnvPassword(envFile, password)
+		staged = true
 	}
-	if password == "" {
-		audit(auditLog, "reset requested but PB_ADMIN_PASSWORD empty; keep marker")
-		return false, nil
+	// 已有待消费的重置文件（本次没投递）⇒ 导出路径给 core。
+	if file := filepath.Join(dataDir, resetFileName); fileExists(file) {
+		_ = os.Setenv(EnvAdminPasswordResetFile, file)
 	}
-	if _, err := os.Stat(dbPath); err != nil {
-		audit(auditLog, "db not found; admin will be seeded from PB_ADMIN_PASSWORD on first start")
-		finish(marker, envFile)
-		return true, nil
-	}
-	remaining, err := deleteAdmin(dbPath)
-	if err != nil {
-		audit(auditLog, "reset SQL failed; keep marker for next start")
-		return false, err
-	}
-	audit(auditLog, fmt.Sprintf("admin deleted (remaining=%d)", remaining))
-	finish(marker, envFile)
-	return true, nil
+	return staged, nil
 }
 
-// deleteAdmin 删除 admin 行并返回删除后的剩余 admin 计数(审计语义与 fnos 对齐:
-// remaining>0 意味着库里有异常的多行 admin,需人工关注)。
-func deleteAdmin(dbPath string) (int64, error) {
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return 0, err
+// stageResetFile 把新口令写进一次性文件（0600,原子写）。
+// 原子写（临时文件 + rename）⇒ core 不会读到半截口令。
+func stageResetFile(dataDir, password string) error {
+	if strings.TrimSpace(dataDir) == "" {
+		return fmt.Errorf("data dir is empty")
 	}
-	defer db.Close()
-	if _, err := db.Exec("DELETE FROM users WHERE username = ?", adminUser); err != nil {
-		return 0, err
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return err
 	}
-	var remaining int64
-	err = db.QueryRow("SELECT COUNT(*) FROM users WHERE username = ?", adminUser).Scan(&remaining)
-	return remaining, err
+	file := filepath.Join(dataDir, resetFileName)
+	tmp := file + ".tmp"
+	if err := os.WriteFile(tmp, []byte(password), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, file); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
-// finish 移除标记并尽力清除 .env 明文密码(写失败不影响重置结果:
-// 密码已删行,本次启动凭 env 重建,残留明文仅在下次人工查看 .env 时可见)。
-func finish(marker, envFile string) {
-	_ = os.Remove(marker)
-	if envFile == "" {
+// syncEnvPassword 把 .env 里的明文口令对齐到新口令（best-effort,失败不阻断）。
+//
+// 为什么需要:.env 是平台凭据文件,prewire_beam_box 的「Key 失效后重建」要用它
+// 重新登录（/admin/login）⇒ 口令过期 ⇒ 重建失败 ⇒ 自愈失效。
+// ⇒ 重置后把 .env 里的口令同步成新口令,保持平台凭据与 admin 口令一致。
+//
+// ⚠️ **绝不清空**（旧实现在消费标记后把口令清成空串 ⇒ prewire 自愈只剩第一次,
+// 正是 fnos#182 记的次生缺陷）。
+func syncEnvPassword(envFile, password string) {
+	if envFile == "" || password == "" {
 		return
 	}
 	raw, err := os.ReadFile(envFile)
 	if err != nil {
 		return
 	}
-	cleared := envPasswordLine.ReplaceAllLiteralString(string(raw), `PB_ADMIN_PASSWORD=""`)
-	if cleared != string(raw) {
-		_ = os.WriteFile(envFile, []byte(cleared), 0o600)
+	updated := envPasswordLine.ReplaceAllLiteralString(string(raw),
+		`PB_ADMIN_PASSWORD="`+escapeEnvValue(password)+"\"")
+	if updated == string(raw) {
+		return
 	}
+	_ = os.WriteFile(envFile, []byte(updated), 0o600)
+}
+
+// escapeEnvValue 转义 .env 双引号值里的特殊字符（与 fnos 侧 quote() 同口径）。
+func escapeEnvValue(v string) string {
+	v = strings.ReplaceAll(v, `\`, `\\`)
+	v = strings.ReplaceAll(v, `"`, `\"`)
+	v = strings.ReplaceAll(v, `$`, `\$`)
+	return v
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func audit(logFile, msg string) {

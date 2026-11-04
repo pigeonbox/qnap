@@ -8,8 +8,9 @@
 // 与 server 仓部署壳的差异:
 //   - JWT 密钥自动生成并持久化到数据目录——NAS 用户不应被迫手工生成密钥
 //     (core 安全基线在 production 模式缺强密钥时拒绝启动);
-//   - 管理员密码重置在启动前消费 .admin_reset 标记(internal/adminreset,
-//     对齐 fnos v1.14.3 语义;QTS 不保证 python3/sqlite3 CLI 故纯 Go 实现)。
+//   - 管理员密码重置在启动前消费 .admin_reset 标记(internal/adminreset):
+//     **原地改哈希**(admin 的 user id 不变 ⇒ 名下分享/API Key 不成孤儿),
+//     平台层不碰数据库;QTS 不保证 python3/sqlite3 CLI,故连驱动都不需要。
 package main
 
 import (
@@ -81,27 +82,37 @@ func dbPath() string {
 }
 
 // consumeAdminReset 消费密码重置请求(尽力而为:任何失败只记 stderr,
-// 不阻断启动——重置语义失败时标记保留,下次启动自动重试)。
+// 不阻断启动——投递失败时标记保留,下次启动自动重试)。
+//
+// 2026-11-04(fnos#182 同源修复):**不再删 admin 行**。
+// 旧实现删 admin 行 ⇒ core 按 PB_ADMIN_PASSWORD 重建 ⇒ admin 的 user id 变化
+// ⇒ 名下分享/API Key 全部成孤儿(真机 88 份 + 3 把,且全程无告警)。
+// 现在平台层**不碰数据库**,只把新口令投递给 core(core 原地改 bcrypt 哈希)
+// ⇒ user id 不变 ⇒ 名下数据归属不变。
+//
 // PB_APP_HOME 由服务脚本导出(应用目录);缺失时跳过(裸跑/CI 冒烟场景)。
 func consumeAdminReset() {
 	home := os.Getenv("PB_APP_HOME")
 	if home == "" {
 		return
 	}
-	db := dbPath()
-	consumed, err := adminreset.Consume(
-		db,
+	dataDir := os.Getenv("PB_DATA_PATH")
+	if dataDir == "" {
+		dataDir = filepath.Dir(dbPath())
+	}
+	staged, err := adminreset.Prepare(
 		filepath.Join(home, ".admin_reset"),
+		dataDir,
 		filepath.Join(home, ".env"),
-		filepath.Join(filepath.Dir(db), ".admin_reset.log"),
+		filepath.Join(dataDir, ".admin_reset.log"),
 		os.Getenv("PB_ADMIN_PASSWORD"),
 	)
 	if err != nil {
-		_, _ = os.Stderr.WriteString("admin reset failed(will retry next start): " + err.Error() + "\n")
+		_, _ = os.Stderr.WriteString("admin reset staging failed(will retry next start): " + err.Error() + "\n")
 		return
 	}
-	if consumed {
-		_, _ = os.Stderr.WriteString("admin reset consumed; admin recreated from PB_ADMIN_PASSWORD on this start\n")
+	if staged {
+		_, _ = os.Stderr.WriteString("admin password reset staged; core applies it in place on this start (user id preserved)\n")
 	}
 }
 
