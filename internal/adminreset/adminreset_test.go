@@ -11,6 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// ── 管理员口令**原地**重置（fnos#182 同源修复，2026-11-04）─────────────
+//
+// 旧行为：平台层直接 DELETE users 表 admin 行，core 启动时按 PB_ADMIN_PASSWORD
+// 重建 ⇒ admin 的 **user id 变化** ⇒ 名下 file_codes / user_api_keys 全部成孤儿。
+//
+// 新行为：平台层**彻底不碰数据库**，只把新口令一次性投递给 core
+// （PB_ADMIN_PASSWORD_RESET_FILE）⇒ core **原地**改 bcrypt 哈希 ⇒ user id 不变。
+
 // newDB 建带 users 表的真实 sqlite 库(core 同款表名/列名),返回库路径。
 func newDB(t *testing.T, admins, users int) string {
 	t.Helper()
@@ -41,52 +49,6 @@ func adminCount(t *testing.T, dbPath string) int {
 	return n
 }
 
-// consume 场景封装:写入 marker/.env,跑 Consume,返回(是否消费, 错误)。
-func consume(t *testing.T, dir, dbPath, password string) (bool, error) {
-	t.Helper()
-	marker := filepath.Join(dir, ".admin_reset")
-	envFile := filepath.Join(dir, ".env")
-	auditLog := filepath.Join(filepath.Dir(dbPath), ".admin_reset.log")
-	return Consume(dbPath, marker, envFile, auditLog, password)
-}
-
-func TestConsumeNoMarker(t *testing.T) {
-	dir := t.TempDir()
-	db := newDB(t, 1, 1)
-	consumed, err := consume(t, dir, db, "secret-pw-123")
-	require.NoError(t, err)
-	assert.False(t, consumed)
-	assert.Equal(t, 1, adminCount(t, db), "无标记不得动库")
-}
-
-func TestConsumeDeletesAdminOnly(t *testing.T) {
-	dir := t.TempDir()
-	db := newDB(t, 1, 2)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, ".admin_reset"), nil, 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, ".env"), []byte("PB_SERVER_PORT=12345\nPB_ADMIN_PASSWORD=\"old-pw\"\n"), 0o600))
-
-	consumed, err := consume(t, dir, db, "new-pw-456")
-	require.NoError(t, err)
-	assert.True(t, consumed)
-	assert.Equal(t, 0, adminCount(t, db), "admin 行应被删除")
-	assert.Equal(t, 2, allUsers(t, db), "普通用户不受影响")
-
-	_, statErr := os.Stat(filepath.Join(dir, ".admin_reset"))
-	assert.True(t, os.IsNotExist(statErr), "标记应被移除")
-
-	// 审计日志落盘
-	logRaw, err := os.ReadFile(filepath.Join(filepath.Dir(db), ".admin_reset.log"))
-	require.NoError(t, err)
-	assert.Contains(t, string(logRaw), "admin deleted (remaining=0)")
-
-	// .env 明文密码清除,其余行保留
-	envRaw, err := os.ReadFile(filepath.Join(dir, ".env"))
-	require.NoError(t, err)
-	assert.Contains(t, string(envRaw), `PB_ADMIN_PASSWORD=""`)
-	assert.Contains(t, string(envRaw), "PB_SERVER_PORT=12345")
-	assert.NotContains(t, string(envRaw), "old-pw")
-}
-
 func allUsers(t *testing.T, dbPath string) int {
 	t.Helper()
 	db, err := sql.Open("sqlite", dbPath)
@@ -97,48 +59,123 @@ func allUsers(t *testing.T, dbPath string) int {
 	return n
 }
 
-func TestConsumeEmptyPasswordKeepsMarker(t *testing.T) {
+// prepare 场景封装:写入 marker/.env,跑 Prepare,返回(是否投递, 错误)。
+func prepare(t *testing.T, dir, dataDir, password string) (bool, error) {
+	t.Helper()
+	marker := filepath.Join(dir, ".admin_reset")
+	envFile := filepath.Join(dir, ".env")
+	return Prepare(marker, dataDir, envFile, filepath.Join(dataDir, ".admin_reset.log"), password)
+}
+
+func TestPrepare_KeepsAdminRowAndStagesPassword(t *testing.T) {
 	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+	db := newDB(t, 1, 2)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".admin_reset"), nil, 0o600))
+	// .env 里是**旧**口令（平台凭据与 admin 口令可能不同步 ⇒ 由 Prepare 对齐）
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".env"),
+		[]byte("PB_SERVER_PORT=12345\nPB_ADMIN_PASSWORD=\"old-pw\"\n"), 0o600))
+
+	staged, err := prepare(t, dir, dataDir, "new-pw")
+	require.NoError(t, err)
+	require.True(t, staged, "有标记且口令非空 ⇒ 必须投递重置")
+
+	// ① admin 行必须还在（原地改哈希，不是删号重建）
+	assert.Equal(t, 1, adminCount(t, db), "不得删 admin 行（否则名下分享/Key 成孤儿）")
+	assert.Equal(t, 3, allUsers(t, db), "普通用户也不受影响")
+
+	// ② 一次性重置文件已投递（core 原地改哈希的载体）
+	rf := filepath.Join(dataDir, ".admin_password_reset")
+	raw, err := os.ReadFile(rf)
+	require.NoError(t, err)
+	assert.Equal(t, "new-pw", string(raw), "重置文件内容 = 提交的新口令")
+	info, err := os.Stat(rf)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "重置文件必须 0600")
+
+	// ③ core 的取件路径已导出（core 启动时据此消费）
+	assert.Equal(t, rf, os.Getenv(EnvAdminPasswordResetFile))
+
+	// ④ 标记已消费
+	_, statErr := os.Stat(filepath.Join(dir, ".admin_reset"))
+	assert.True(t, os.IsNotExist(statErr), "标记应被移除")
+
+	// ⑤ .env 里的明文口令必须与 admin 口令一致（prewire 自愈要靠它重新登录）
+	envRaw, err := os.ReadFile(filepath.Join(dir, ".env"))
+	require.NoError(t, err)
+	assert.Contains(t, string(envRaw), `PB_ADMIN_PASSWORD="new-pw"`,
+		"平台凭据必须与新口令对齐（否则 prewire 重建 Key 时用旧口令登录失败）")
+	assert.NotContains(t, string(envRaw), `PB_ADMIN_PASSWORD=""`)
+	assert.Contains(t, string(envRaw), "PB_SERVER_PORT=12345", "其余行逐字保留")
+
+	// ⑥ 审计日志落盘
+	logRaw, err := os.ReadFile(filepath.Join(dataDir, ".admin_reset.log"))
+	require.NoError(t, err)
+	assert.Contains(t, string(logRaw), "staged")
+}
+
+func TestPrepareNoMarker(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+	db := newDB(t, 1, 1)
+	t.Setenv(EnvAdminPasswordResetFile, "")
+
+	staged, err := prepare(t, dir, dataDir, "secret-pw-123")
+	require.NoError(t, err)
+	assert.False(t, staged)
+	assert.Equal(t, 1, adminCount(t, db), "无标记不得动库")
+	assert.Empty(t, os.Getenv(EnvAdminPasswordResetFile), "无待处理重置时不得导出路径")
+}
+
+func TestPrepareEmptyPasswordKeepsMarker(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
 	db := newDB(t, 1, 0)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".admin_reset"), nil, 0o600))
 
-	consumed, err := consume(t, dir, db, "")
+	staged, err := prepare(t, dir, dataDir, "")
 	require.NoError(t, err, "空密码不视为错误,仅保留标记待下次启动")
-	assert.False(t, consumed)
+	assert.False(t, staged)
 	assert.Equal(t, 1, adminCount(t, db))
 
 	_, statErr := os.Stat(filepath.Join(dir, ".admin_reset"))
 	assert.NoError(t, statErr, "标记保留")
 
-	logRaw, _ := os.ReadFile(filepath.Join(filepath.Dir(db), ".admin_reset.log"))
+	logRaw, _ := os.ReadFile(filepath.Join(dataDir, ".admin_reset.log"))
 	assert.Contains(t, string(logRaw), "PB_ADMIN_PASSWORD empty")
 }
 
-func TestConsumeMissingDBConsumesAsSeed(t *testing.T) {
+// 上一次启动没起来（投递了但 core 没消费）⇒ 下次启动仍须能应用。
+func TestPrepare_ArmsExistingResetFile(t *testing.T) {
 	dir := t.TempDir()
-	missingDB := filepath.Join(dir, "data", "fileCodeBox.db") // 不存在
-	require.NoError(t, os.MkdirAll(filepath.Dir(missingDB), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, ".admin_reset"), nil, 0o600))
+	dataDir := filepath.Join(dir, "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, ".admin_password_reset"),
+		[]byte("pending-pw"), 0o600))
+	t.Setenv(EnvAdminPasswordResetFile, "")
 
-	consumed, err := consume(t, dir, missingDB, "seed-pw-789")
+	staged, err := prepare(t, dir, dataDir, "")
 	require.NoError(t, err)
-	assert.True(t, consumed, "库不存在=首启播种场景,直接消费")
-
-	logRaw, err := os.ReadFile(filepath.Join(dir, "data", ".admin_reset.log"))
-	require.NoError(t, err)
-	assert.Contains(t, string(logRaw), "seeded from PB_ADMIN_PASSWORD")
+	assert.False(t, staged, "没有标记就没有新投递")
+	assert.Equal(t, filepath.Join(dataDir, ".admin_password_reset"),
+		os.Getenv(EnvAdminPasswordResetFile),
+		"已存在的待消费重置文件必须被导出（上次没启动成功的补投）")
 }
 
-func TestConsumeMissingDBKeepsMarkerOnSQLError(t *testing.T) {
+// 投递失败（数据目录不可用）⇒ 保留标记待下次启动重试。
+func TestPrepare_StagingFailureKeepsMarker(t *testing.T) {
 	dir := t.TempDir()
-	// 非 sqlite 文件冒充业务库 → SQL 失败 → 保留标记待重试
-	bad := filepath.Join(dir, "fileCodeBox.db")
-	require.NoError(t, os.WriteFile(bad, []byte("this is not a database"), 0o600))
+	// 数据目录路径被一个**普通文件**占住 ⇒ mkdir 必然失败
+	blocked := filepath.Join(dir, "data")
+	require.NoError(t, os.WriteFile(blocked, []byte("not a dir"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".admin_reset"), nil, 0o600))
 
-	consumed, err := consume(t, dir, bad, "pw")
-	assert.Error(t, err, "坏库应报错")
-	assert.False(t, consumed, "SQL 失败保留标记")
+	staged, err := prepare(t, dir, blocked, "pw")
+	require.Error(t, err, "投递失败必须报错")
+	assert.False(t, staged)
 
 	_, statErr := os.Stat(filepath.Join(dir, ".admin_reset"))
 	assert.NoError(t, statErr, "标记保留待下次启动重试")
