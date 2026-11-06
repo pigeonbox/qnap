@@ -215,6 +215,53 @@ else
     fail "完整包被误拦(不应中止安装)"
 fi
 
+# 快照文件枚举/计数(用 glob 而非 ls:shellcheck SC2012 会判红,且 glob 在无匹配时
+# 保持字面量,配 [ -f ] 判断即可)
+bak_count() {
+    _n=0
+    for _f in "$1"/fileCodeBox.db.bak-*; do
+        [ -f "$_f" ] && _n=$((_n + 1))
+    done
+    echo "$_n"
+}
+
+echo "── Q5d pkg_pre_install:升级前快照业务库(轮转保留 3 份)"
+# 迁移前快照 = 唯一回滚点(4.0.0 的删列/磁盘布局上提不可逆)。钩子时机在
+# stop_service 之后、解包之前 ⇒ 库已静止且仍是**旧** schema。
+printf 'OLD-SCHEMA-DB' > "$APP_DIR/data/fileCodeBox.db"
+pkg_pre_install
+assert_eq "升级前生成 1 份快照" "$(bak_count "$APP_DIR/data")" "1"
+assert_eq "快照与源库逐字一致" "$(cat "$APP_DIR/data"/fileCodeBox.db.bak-* 2>/dev/null)" "OLD-SCHEMA-DB"
+# 轮转:预置 3 份更旧的快照(名字里的时间戳更早),新快照进来后总数必须仍是 3
+# ⇒ 最旧的一份被删。轮转按**名字**排序,故这里不依赖 mtime,无需 touch。
+rm -f "$APP_DIR"/data/fileCodeBox.db.bak-* 2>/dev/null
+for _s in 20000101-000001 20000101-000002 20000101-000003; do
+    printf 'x' > "$APP_DIR/data/fileCodeBox.db.bak-$_s"
+done
+pkg_pre_install
+assert_eq "第 4 份进来后仍只保留 3 份" "$(bak_count "$APP_DIR/data")" "3"
+# 反向:被删的必须是最旧那份(名字最小),否则等于删掉了最有用的回滚点
+if [ -f "$APP_DIR/data/fileCodeBox.db.bak-20000101-000001" ]; then
+    fail "轮转删错了对象(最旧的一份仍在)"
+else
+    ok "轮转删的是最旧的一份"
+fi
+# 备份失败必须中止安装(与上方截断包检查同一策略:赌不起的时候不赌)。
+# 用权限位注入 cp 失败;root 下 chmod 拦不住(root 可无视权限位)⇒ 跳过,避免假红。
+if [ "$(id -u)" -ne 0 ]; then
+    _before=$(bak_count "$APP_DIR/data")
+    chmod 000 "$APP_DIR/data/fileCodeBox.db"
+    if ( pkg_pre_install ) >/dev/null 2>&1; then
+        fail "备份失败未被拦下(应中止安装)"
+    else
+        ok "备份失败时中止安装(旧安装与数据未被改动)"
+    fi
+    chmod 600 "$APP_DIR/data/fileCodeBox.db"
+    assert_eq "中止路径不留下半份快照" "$(bak_count "$APP_DIR/data")" "$_before"
+else
+    ok "root 环境无法用权限位注入 cp 失败,跳过中止分支"
+fi
+
 echo "── Q6 pkg_post_install:Docker 旧版升级清理死配置,用户配置保留"
 printf 'PB_SERVER_PORT=8080\nPB_ADMIN_PASSWORD="secret"\nFCB_API_PORT=12345\nFCB_IMAGE_TAG=v0.15.7\nPB_IMAGE_TAG=v0.15.7\nPB_API_BIND=0.0.0.0\nPB_MAX_BODY_SIZE=1024m\nTZ=Asia/Shanghai\n' > "$APP_DIR/.env"
 pkg_post_install

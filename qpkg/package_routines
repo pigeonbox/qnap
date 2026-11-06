@@ -41,6 +41,41 @@ pkg_pre_install() {
         fi
     fi
 
+    # ── 升级前业务库快照(保留最近 3 份)────────────────────────────────
+    # 时机:qinstall.sh 在 stop_service 之后、解包(extract_data)之前调本钩子
+    # ⇒ 服务已停、库文件静止、新版二进制尚未就位 ⇒ 快照一致且仍是**迁移前** schema。
+    #
+    # 为什么要做:升级首启会跑 SQLite schema 自动迁移,而历史上 4.0.0 是**不可逆**的
+    # (DROP 掉死列 + 磁盘布局上提)。App Center「装回旧版本」只是换回旧二进制,
+    # 旧代码读到已迁移的库不会自己变回去 ⇒ 没有迁移前快照就没有回滚点。
+    #
+    # 为什么失败要中止:与上方截断包检查同一策略 —— 赌不起的时候不赌。库拷不动
+    # 通常是卷满或权限变了,此时继续升级 = 在没有回滚点的状态下跑不可逆迁移。
+    # 中止后旧安装与数据原封不动(QDK 尚未 extract_data),清理后重装即可。
+    #
+    # 全新安装时本钩子也会跑 ⇒ 没有库就直接跳过(不能让新装用户装不上)。
+    _base=$("$GETCFG" SHARE_DEF defVolMP -f "$DEF_SHARE" 2>/dev/null)
+    [ -n "$_base" ] || _base="/share/CACHEDEV1_DATA"
+    _db="${_base}/pigeonbox/data/fileCodeBox.db"
+    if [ -s "$_db" ]; then
+        _stamp=$(date +%Y%m%d-%H%M%S)
+        if ! cp "$_db" "${_db}.bak-${_stamp}" 2>/dev/null; then
+            "$WRITE_LOG" "PigeonBox 安装中止：升级前备份业务库失败（${_db}）——常见原因是存储卷已满或权限变化；请清理后重试（已装版本与数据均未被改动）" 2
+            echo "Installation Abort."
+            exit 1
+        fi
+        # 轮转:只保留最近 3 份(与 fnOS 的 cmd/upgrade_callback、DSM 的 preupgrade 同口径)
+        # 排序用**名字**而不是 mtime:文件名是定宽时间戳(YYYYMMDD-HHMMSS),字典序=时间序;
+        # 而 mtime 会被 cp -a / 备份还原 / 时钟跳变改掉,反而不确定。
+        for _old in "${_db}".bak-*; do
+            [ -f "$_old" ] || continue
+            printf '%s\n' "$_old"
+        done | sort -r | tail -n +4 | while read -r _f; do
+            rm -f "$_f"
+        done
+        "$WRITE_LOG" "PigeonBox: pre-upgrade DB snapshot ${_db}.bak-${_stamp}" 4
+    fi
+
     # 升级时清掉上一版的前端产物(QDK 原地升级只覆盖、不删除旧文件)。
     # 为什么要清:vite 产物文件名带内容哈希,新版文件名必然不同 ⇒ 旧 chunk
     # 会与新 chunk **共存**在 www/assets/。运行时不可达(入口 index.html 指向
