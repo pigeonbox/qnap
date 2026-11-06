@@ -99,6 +99,12 @@ class H(BaseHTTPRequestHandler):
             STATE["keys"][key] = True
             save()
             return self._send(200, json.dumps({"code": 0, "data": {"key": key}}))
+        if path == "/__invalidate":
+            # 测试钩子：把已签发的 Key 全部作废（模拟「用户手动撤销 / 换库」）
+            # ⇒ 用于验证 prewire 的「每次启动校验有效性、失效才重建」自愈路径。
+            STATE["keys"] = {}
+            save()
+            return self._send(200, json.dumps({"ok": "1"}))
         if path == "/api/config":
             # ⚠️ 真实契约：令牌走 **X-P2PCWEB 头**；只有首页 `/` 才认 `?t=`
             #   ⇒ 预接线若用 `?t=` 调 API ⇒ 403 ⇒ 配置写不进去（真机实录）。
@@ -218,6 +224,20 @@ case "$CFG4" in
     *) note_fail "令牌晚到时未完成预置（等待逻辑失效）" ;;
 esac
 
+# ── 判据 ⑤：缓存的 Key 失效 ⇒ 自愈重建（**后续**启动仍能跑）────────────
+#   这一条正是 fnos#182 记的次生缺陷点：prewire 的「每次启动校验有效性、失效才重建」
+#   此前因 .env 明文口令被清空而**只剩第一次生效** ⇒ 必须有判据锁住「后来也能重建」。
+echo "── 判据 ⑤：缓存 Key 失效 ⇒ 自愈重建（后续启动仍能跑）"
+BEFORE5=$(state_get created)
+curl -s -m 5 -X POST "http://127.0.0.1:${BOX_PORT}/__invalidate" >/dev/null 2>&1
+run_prewire "$PREWIRE"
+AFTER5=$(state_get created)
+if [ "${AFTER5:-0}" -gt "${BEFORE5:-0}" ]; then
+    note_ok "缓存 Key 失效后重建了新 Key（${BEFORE5}→${AFTER5}）⇒ 自愈在后续启动仍生效"
+else
+    note_fail "缓存 Key 失效后没有重建（创建计数 ${BEFORE5}→${AFTER5}）⇒ 自愈只在第一次生效"
+fi
+
 # ── 负对照 A：改坏「缓存有效则复用」⇒ 判据 ② 必须红 ───────────────────
 echo "── 负对照 A：改坏复用逻辑（判据 ② 必须红）"
 BAD="$TMP/prewire-bad.sh"
@@ -249,6 +269,54 @@ else
     note_fail "坏副本未改窄 scope（${SCOPES2:-无}）⇒ 变异无效"
 fi
 
+# ── 负对照 C：删掉「失效就清空 cached_key」⇒ 判据 ⑤ 必须红 ─────────────
+#   判据 ⑤ 的反向验证：若脚本在 Key 失效时**不丢弃**旧 Key，就永远走不到重建分支
+#   ⇒ 自愈失效 ⇒ 判据 ⑤ 必须能抓住它。
+echo "── 负对照 C：失效时不丢弃旧 Key（判据 ⑤ 必须红）"
+BAD3="$TMP/prewire-bad3.sh"
+sed '/^[[:space:]]*cached_key=""$/d' "$PREWIRE" > "$BAD3"
+if grep -q 'cached_key=""' "$BAD3"; then
+    note_fail "负对照变异未生效（脚本结构变了 ⇒ 判据 ⑤ 可能已失效）"
+else
+    curl -s -m 5 -X POST "http://127.0.0.1:${BOX_PORT}/__invalidate" >/dev/null 2>&1
+    BEFORE_C=$(state_get created)
+    run_prewire "$BAD3"
+    AFTER_C=$(state_get created)
+    if [ "${AFTER_C:-0}" -eq "${BEFORE_C:-0}" ]; then
+        note_ok "坏副本在 Key 失效时没有重建（${BEFORE_C}→${AFTER_C}）⇒ 判据 ⑤ 会红（有牙齿）"
+    else
+        note_fail "坏副本仍重建了 Key（${BEFORE_C}→${AFTER_C}）⇒ 变异无效，判据 ⑤ 无牙齿"
+    fi
+fi
+
+# ── 判据 ⑥：登录 401 ⇒ 提示必须点名「.env 口令已过期」─────────────────
+#   用户体验缺口：登录失败只说「登录失败 ⇒ 跳过」时，用户不知道是
+#   .env 里的 PB_ADMIN_PASSWORD 与库中口令不符（改过口令/口令过期）。
+#   ⇒ 401（凭据被拒）时提示必须点名 .env 口令已过期。
+echo "── 判据 ⑥：登录 401 ⇒ 提示点名 .env 口令已过期"
+rm -f "$DATA/.beam_box_api_key"
+curl -s -m 5 -X POST "http://127.0.0.1:${BOX_PORT}/__invalidate" >/dev/null 2>&1
+OUT6="$(PB_SERVER_PORT="$BOX_PORT" PB_P2PCWEB_PORT="$BEAM_PORT" PB_DATA_PATH="$DATA" \
+    PB_ADMIN_PASSWORD=wrong-pass PB_PREWIRE_WAIT_MAX=10 bash "$PREWIRE" 2>&1)"
+if printf '%s' "$OUT6" | grep -q '口令已过期'; then
+    note_ok "登录失败提示点名「.env 口令已过期」"
+else
+    note_fail "登录失败提示未点名 .env 口令已过期（实得：$(printf '%s' "$OUT6" | grep '登录失败' | head -1)）"
+fi
+
+# ── 负对照 D：提示退回旧文案 ⇒ 判据 ⑥ 必须红 ──────────────────────────
+echo "── 负对照 D：提示退回旧文案（判据 ⑥ 必须红）"
+BAD4="$TMP/prewire-bad4.sh"
+sed 's|⇒ .env 口令已过期（PB_ADMIN_PASSWORD 与库中口令不符）||' "$PREWIRE" > "$BAD4"
+rm -f "$DATA/.beam_box_api_key"
+curl -s -m 5 -X POST "http://127.0.0.1:${BOX_PORT}/__invalidate" >/dev/null 2>&1
+OUTD="$(PB_SERVER_PORT="$BOX_PORT" PB_P2PCWEB_PORT="$BEAM_PORT" PB_DATA_PATH="$DATA" \
+    PB_ADMIN_PASSWORD=wrong-pass PB_PREWIRE_WAIT_MAX=10 bash "$BAD4" 2>&1)"
+if printf '%s' "$OUTD" | grep -q '口令已过期'; then
+    note_fail "坏副本仍出现新文案 ⇒ 变异无效，判据 ⑥ 无牙齿"
+else
+    note_ok "坏副本退回旧文案（判据 ⑥ 能抓住它）"
+fi
 if [ "$fails" -gt 0 ]; then
     echo
     echo "✗ $fails 条判据失效"
