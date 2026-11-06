@@ -78,10 +78,15 @@ pkg_post_install() {
         # Docker 旧版(QPKG 同名升级)遗留清理:FCB_ 前缀假线配置(前缀改名列车漏网)
         # 与 compose/nginx 专属的死配置行(镜像钉版/数据目录映射/绑定地址/体积上限),
         # 原生模式均不消费;用户显式配置(PB_SERVER_PORT/PB_ADMIN_PASSWORD/…)一律不动
+        #
+        # ⚠️ TZ= **不删**（2026-11-06 修）：它原在本行的删除清单里，但 TZ 不是
+        # compose 专属死配置——它是用户显式设定的时区；原生模式若消费它，删除等于
+        # **每次升级静默把用户时区重置回默认**（日志/分享过期时间全跟着漂）；
+        # 即使原生模式不消费，留着也无害 ⇒ 一律保留。
         sed -i.bak \
             -e '/^FCB_API_PORT=/d' -e '/^FCB_DATA_DIR=/d' -e '/^FCB_IMAGE_TAG=/d' \
             -e '/^PB_IMAGE_TAG=/d' -e '/^PB_DATA_DIR=/d' \
-            -e '/^PB_API_BIND=/d' -e '/^PB_MAX_BODY_SIZE=/d' -e '/^TZ=/d' \
+            -e '/^PB_API_BIND=/d' -e '/^PB_MAX_BODY_SIZE=/d' \
             "$_env" && rm -f "${_env}.bak"
     fi
 
