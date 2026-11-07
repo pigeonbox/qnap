@@ -8,7 +8,7 @@ require (
 	github.com/cloudwego/hertz v0.10.6
 	github.com/glebarez/go-sqlite v1.22.0
 	github.com/glebarez/sqlite v1.11.0
-	github.com/oekit/core v0.12.2
+	github.com/oekit/core v0.13.1
 	github.com/pigeonbox/contracts v0.23.0
 	github.com/pigeonbox/core v0.38.0
 	github.com/stretchr/testify v1.12.1
@@ -53,11 +53,11 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/oekit/concurrency v0.25.1 // indirect
+	github.com/oekit/concurrency v0.28.1 // indirect
 	github.com/oekit/gormx v0.11.2 // indirect
 	github.com/oekit/kitx v0.4.0 // indirect
-	github.com/oekit/logx v0.8.3 // indirect
-	github.com/oekit/pkg v0.35.0 // indirect
+	github.com/oekit/logx v0.8.6 // indirect
+	github.com/oekit/pkg v0.37.1 // indirect
 	github.com/oekit/redisx v0.11.1 // indirect
 	github.com/pandatix/go-abnf v0.5.3 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
