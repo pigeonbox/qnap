@@ -8,7 +8,7 @@ require (
 	github.com/cloudwego/hertz v0.10.6
 	github.com/glebarez/go-sqlite v1.23.0
 	github.com/glebarez/sqlite v1.11.0
-	github.com/oekit/core v0.13.4
+	github.com/oekit/core v0.13.5
 	github.com/pigeonbox/contracts v0.23.0
 	github.com/pigeonbox/core v0.38.0
 	github.com/stretchr/testify v1.12.1
