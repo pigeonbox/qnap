@@ -264,6 +264,10 @@ fi
 
 echo "── Q6 pkg_post_install:Docker 旧版升级清理死配置,用户配置保留"
 printf 'PB_SERVER_PORT=8080\nPB_ADMIN_PASSWORD="secret"\nFCB_API_PORT=12345\nFCB_IMAGE_TAG=v0.15.7\nPB_IMAGE_TAG=v0.15.7\nPB_API_BIND=0.0.0.0\nPB_MAX_BODY_SIZE=1024m\nTZ=Asia/Shanghai\n' > "$APP_DIR/.env"
+# 升级路径的权限前置:显式置 644,复刻「sed 以临时文件重写、不复制原权限」的
+# 最坏结果(qnap#189/synology#148 同型)。升级钩子跑完必须回到 600 ——
+# 去掉 package_routines 里 sed 后的 chmod 600 兜底时,本断言必红。
+chmod 644 "$APP_DIR/.env"
 pkg_post_install
 ENV_NOW=$(cat "$APP_DIR/.env")
 assert_contains "用户端口保留"     "$ENV_NOW" "PB_SERVER_PORT=8080"
@@ -275,6 +279,12 @@ assert_not_contains "PB_API_BIND 已清"  "$ENV_NOW" "PB_API_BIND"
 assert_not_contains "PB_MAX_BODY_SIZE 已清" "$ENV_NOW" "PB_MAX_BODY_SIZE"
 assert_not_contains "TZ 已清"           "$ENV_NOW" "^TZ="
 if [ ! -f "$APP_DIR/.env.bak" ]; then ok "无 .bak 残留"; else fail ".env.bak 残留"; fi
+# 升级路径权限断言(qnap#189):此前只断言新装 600,升级路径只断言内容不断言权限。
+if find "$APP_DIR/.env" -maxdepth 0 -perm 0600 >/dev/null 2>&1; then
+    ok "升级路径 .env 权限仍为 600"
+else
+    fail "升级路径 .env 权限非 600(明文口令/JWT 密钥对本地账户可读)"
+fi
 
 echo "── Q7 看门狗:进程消失自动拉起"
 WATCHDOG_INTERVAL=1 sh qpkg/shared/pigeonbox.sh start
