@@ -123,6 +123,10 @@ pkg_post_install() {
             -e '/^PB_IMAGE_TAG=/d' -e '/^PB_DATA_DIR=/d' \
             -e '/^PB_API_BIND=/d' -e '/^PB_MAX_BODY_SIZE=/d' \
             "$_env" && rm -f "${_env}.bak"
+        # sed 重写可能丢权限(synology#148 同型,qnap#189):QTS 的 sed 若以临时文件
+        # 重写且不复制原权限 ⇒ 升级后 .env 600→644,本地账户可读明文口令与 JWT
+        # 密钥。**无条件**恢复 600(幂等无害,不依赖各端 sed 的权限行为)。
+        chmod 600 "$_env"
     fi
 
     # ── 安装完整性自检(2026-10-22 真机事故固化)────────────────────────
