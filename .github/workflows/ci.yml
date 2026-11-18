@@ -17,9 +17,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: shellcheck
+        # ⚠️ 扫描射程**只含本仓自维护的脚本**：
+        #   third_party/shellkit 是**上游镜像**（生成物勿手改；完整性由 hub 侧
+        #   scripts/check-shellkit-vendor.sh 的逐字对账负责）⇒ 不进扫描射程。
+        #   设备侧脚本（qpkg/shared/pigeonbox.sh）按 POSIX sh 口径扫，不引 shellkit。
         run: |
           shellcheck qpkg/shared/pigeonbox.sh tests/run-tests.sh \
-            scripts/build-native.sh scripts/build-qpkg.sh
+            scripts/build-native.sh scripts/build-qpkg.sh \
+            scripts/check-pb-in-qpkg.sh scripts/prewire-beam-box-selftest.sh
       - name: 原生形态守卫(不得回退 Docker/compose 面)
         run: |
           if grep -qi 'container-station' qpkg/qpkg.cfg; then
