@@ -20,14 +20,31 @@
 # 用法: bash scripts/check-pb-in-qpkg.sh
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$ROOT" || exit 1
+# ── shellkit（编译侧统一管道；**设备侧脚本一律不引**，见 C1） ───────────────
+# third_party/shellkit 是上游镜像（由 hub 侧 scripts/vendor-shellkit.sh 物化）⇒ **勿手改**。
+# ⚠️ 落点是 third_party/ 而不是 vendor/：Go ≥1.14 见到**模块根**下有 vendor/ 就默认切
+#    vendor 模式 ⇒ 缺 vendor/modules.txt ⇒ go build 报 "inconsistent vendoring"（实测现红）。
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1090,SC1091  # 副本路径含变量 ⇒ shellcheck 静态跟不进去
+. "$REPO_ROOT/third_party/shellkit/lib/bootstrap.sh"
+export SHELLKIT_LANG="${SHELLKIT_LANG:-zh_CN}" # 库内消息走中文,与生态输出一致
 
-PASS=0; FAIL=0
-ok()  { PASS=$((PASS+1)); echo "  ✓ $1"; }
-bad() { FAIL=$((FAIL+1)); echo "  ✗ $1${2:+  [$2]}"; }
+cd "$REPO_ROOT" || exit 1
 
-QPKG_DIR="$ROOT/qpkg"
+# ⚠️ **判据逻辑一个字未改**（E4）：只把输出与退出码换成 shellkit 的管道
+#   （echo ⇒ log_ok/log_error；判据本身的判定与计数原样保留）。
+PASS=0
+FAIL=0
+ok() {
+  PASS=$((PASS + 1))
+  log_ok "$1"
+}
+bad() {
+  FAIL=$((FAIL + 1))
+  log_error "$1${2:+  [$2]}"
+}
+
+QPKG_DIR="$REPO_ROOT/qpkg"
 
 # ── V1 打包目录含 pb 双架构二进制 ──
 v1_ok=1
@@ -35,7 +52,8 @@ v1_ok=1
 #    而 qarch 是 QPKG 的**目录名**（x86_64 / arm_64）⇒ 两者不能混用。
 # 目录名（QPKG）与文件名（GOARCH）口径不同 ⇒ 成对列出，不用 set -- 分词。
 for pair in "x86_64:amd64" "arm_64:arm64"; do
-  qarch="${pair%%:*}"; goarch="${pair##*:}"
+  qarch="${pair%%:*}"
+  goarch="${pair##*:}"
   f="$QPKG_DIR/${qarch}/bin/pb-linux-${goarch}"
   if [ ! -f "$f" ]; then
     bad "V1 打包目录缺 ${qarch}/bin/pb-linux-${qarch}" "路径 $f"
@@ -48,7 +66,8 @@ done
 # ── V2 pb 可执行（架构/完整性）──
 if [ "$v1_ok" = "1" ]; then
   for pair in "x86_64:amd64" "arm_64:arm64"; do
-    qarch="${pair%%:*}"; goarch="${pair##*:}"
+    qarch="${pair%%:*}"
+    goarch="${pair##*:}"
     f="$QPKG_DIR/${qarch}/bin/pb-linux-${goarch}"
     [ -f "$f" ] || continue
     # 交叉架构的二进制在本机**跑不了** ⇒ 只对「本机架构 + 本机 OS」做执行验证，
@@ -65,7 +84,7 @@ if [ "$v1_ok" = "1" ]; then
     if [ "$can_exec" = "1" ]; then
       case "$goarch" in
         amd64) [ "$host_arch" = "x86_64" ] && host_match=1 ;;
-        arm64) case "$host_arch" in aarch64|arm64) host_match=1 ;; esac ;;
+        arm64) case "$host_arch" in aarch64 | arm64) host_match=1 ;; esac ;;
       esac
     fi
     if [ "$host_match" = "1" ]; then
@@ -82,7 +101,7 @@ if [ "$v1_ok" = "1" ]; then
       kind="$(file -b "$f" 2>/dev/null || echo unknown)"
       case "$kind" in
         *"ELF"*"x86-64"*) ok "V2 ${qarch} 的 pb 架构正确（非本机，静态判定：${kind}）" ;;
-        *"ELF"*"ARM aarch64"*|*"ELF"*"ARM64"*) ok "V2 ${qarch} 的 pb 架构正确（非本机，静态判定：${kind}）" ;;
+        *"ELF"*"ARM aarch64"* | *"ELF"*"ARM64"*) ok "V2 ${qarch} 的 pb 架构正确（非本机，静态判定：${kind}）" ;;
         *) bad "V2 ${qarch} 的 pb 不是预期的 ELF 可执行文件" "$kind" ;;
       esac
     fi
@@ -96,10 +115,11 @@ fi
 sums_checked=0
 # 目录名（QPKG）与文件名（GOARCH）口径不同 ⇒ 成对列出，不用 set -- 分词。
 for pair in "x86_64:amd64" "arm_64:arm64"; do
-  qarch="${pair%%:*}"; goarch="${pair##*:}"
+  qarch="${pair%%:*}"
+  goarch="${pair##*:}"
   sums="$QPKG_DIR/${qarch}/bin/SHA256SUMS"
   if [ ! -f "$sums" ]; then
-    echo "  (跳过 V3：尚无 ${qarch}/bin/SHA256SUMS —— 打包期产物)"
+    log_info "(跳过 V3：尚无 ${qarch}/bin/SHA256SUMS —— 打包期产物)"
     continue
   fi
   sums_checked=$((sums_checked + 1))
@@ -110,17 +130,16 @@ for pair in "x86_64:amd64" "arm_64:arm64"; do
   fi
 done
 
-echo
 if [ "$FAIL" -eq 0 ]; then
-  echo "✓ pb 随包门禁通过（$PASS 项）"
+  log_ok "pb 随包门禁通过（$PASS 项）"
   exit 0
 fi
 if [ "${PB_REQUIRED:-0}" != "1" ]; then
   # CI 阶段（bump PR）：server 同号 tag 还不存在 ⇒ pb 编不出来是**预期**的
   # ⇒ 只告警，不阻断（否则 bump PR 合不进去 ⇒ 列车死锁）。
-  echo "⚠ pb 随包门禁未通过（$PASS 通过 / $FAIL 失败）——CI 阶段不阻断"
-  echo "  （server 同号 tag 未就绪时 pb 会缺失；发布流水线以 PB_REQUIRED=1 硬断言）"
+  log_warn "pb 随包门禁未通过（$PASS 通过 / $FAIL 失败）——CI 阶段不阻断"
+  log_info "（server 同号 tag 未就绪时 pb 会缺失；发布流水线以 PB_REQUIRED=1 硬断言）"
   exit 0
 fi
-echo "✗ pb 随包门禁失败（$PASS 通过 / $FAIL 失败）"
+log_error "pb 随包门禁失败（$PASS 通过 / $FAIL 失败）"
 exit 1
