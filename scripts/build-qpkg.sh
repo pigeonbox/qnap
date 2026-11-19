@@ -57,9 +57,21 @@ cp -R qpkg/. "$STAGE/"
 # 版本注入(qpkg.cfg 模板占位 __VERSION__)+ CRLF 压平:
 # CRLF 是 QPKG 官方承认的最大坑(qinstall/服务脚本带 \r 直接执行失败)
 sed -i.bak "s/^QPKG_VER=.*/QPKG_VER=\"${VERSION}\"/" "$STAGE/qpkg.cfg" && rm -f "$STAGE/qpkg.cfg.bak"
+# ⚠️ prewire_beam_box **没有 .sh 后缀** ⇒ 上面的 '*.sh' 匹配不到它
+#   ⇒ 它从没被 dos2unix ⇒ 一旦带上 CRLF，设备上 shebang 直接失效（QPKG 官方承认的
+#   最大坑：带 \r 直接执行失败）⇒ 它是要在设备上**执行**的脚本 ⇒ 显式点名。
 find "$STAGE" -type f \( -name '*.sh' -o -name 'qpkg.cfg' -o -name 'package_routines' \
-  -o -name '*.example' \) -exec dos2unix -q {} +
-chmod 0755 "$STAGE/shared/"*.sh "$STAGE/${ARCH}/bin/"
+  -o -name '*.example' -o -name 'prewire_beam_box' \) -exec dos2unix -q {} +
+# 设备侧 shellkit POSIX 子集（上游镜像，**勿手改**）必须进包：shared/ 被 QDK 平铺到
+#   包根 ⇒ 装机后落在 ${QPKG_ROOT}/shellkit-posix.sh ⇒ 服务脚本与预接线脚本同目录找它
+#   （服务脚本缺它 ⇒ fail-closed 退 5 ⇒ 装机即挂）⇒ 打包期就拦住漏装。
+[ -f "$STAGE/shared/shellkit-posix.sh" ] || die 1 "缺 qpkg/shared/shellkit-posix.sh（设备侧 POSIX 子集）"
+# 权限：**只给要执行的脚本 0755**。POSIX 子集是被 `.`（source）进来的**库** ⇒ 0644 即可
+#   （原写法 `*.sh` 会把它也 chmod 成 0755；能跑、无害，但纯 POSIX 源码给执行位
+#   没有语义 ⇒ 这里显式收窄）。prewire_beam_box 无 .sh 后缀 ⇒ 必须显式点名，
+#   否则打包后不可执行 ⇒ 服务脚本的 `nohup "$_prewire_script"` 会 Permission denied。
+chmod 0755 "$STAGE/shared/"*.sh "$STAGE/shared/prewire_beam_box" "$STAGE/${ARCH}/bin/"
+chmod 0644 "$STAGE/shared/shellkit-posix.sh"
 
 # ⚠️ qbuild 组包命令行**一字未改**(E5:包格式命令行,改错一行 = 包装不上)。
 QBUILD_DIR="$(dirname "$QBUILD")"

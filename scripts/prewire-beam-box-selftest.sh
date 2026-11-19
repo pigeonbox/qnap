@@ -8,6 +8,8 @@
 #   ⇒ 两类都必须有**能判红的**判据。
 #
 # 本自测跑**真的脚本**（临时工作区 + 假 Box + 假 p2pcweb）：
+#   ⚠️ 2026-11-19：预接线脚本已改成 **POSIX sh**（设备侧是 busybox ash）
+#     ⇒ 自测也必须用 **sh** 跑它（bash 能过 ≠ ash 能过）⇒ 见 run_prewire。
 #   ① 首次执行：建 1 把 Key、scope 精确为 admin/user/share、配置收到地址+Key；
 #   ② 二次执行：**不得再建 Key**（幂等）、配置里的 Key 与首次一致；
 #   ③ 负对照 A：把「缓存有效则复用」改坏 ⇒ 二次执行建了 2 把 ⇒ 判据 ② 必须红；
@@ -17,7 +19,10 @@
 # 用法: bash scripts/prewire-beam-box-selftest.sh
 set -uo pipefail
 
-# ── shellkit（编译侧统一管道；**设备侧脚本一律不引**，见 C1） ───────────────
+# ── shellkit（编译侧统一管道）────────────────────────────────────────────
+# ⚠️ 2026-11-19 更新：**设备侧脚本现在引 shellkit 的 POSIX 子集**
+#   （qpkg/shared/shellkit-posix.sh，上游 lib/posix 的镜像），
+#   **不是**本仓 third_party/ 这份 bash 版副本 ⇒ 两者互不替代。
 # third_party/shellkit 是上游镜像（由 hub 侧 scripts/vendor-shellkit.sh 物化）⇒ **勿手改**。
 # ⚠️ 落点是 third_party/ 而不是 vendor/：Go ≥1.14 见到**模块根**下有 vendor/ 就默认切
 #    vendor 模式 ⇒ 缺 vendor/modules.txt ⇒ go build 报 "inconsistent vendoring"（实测现红）。
@@ -33,6 +38,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #   ⇒ 8 条判据全灭、负对照的 sed 也读不到文件 ⇒ 「变异无效，判据无牙齿」。
 #   ⇒ 症状看着像「判据没牙齿」，实为**自测自身失效**（路径指错）。
 PREWIRE="$SCRIPT_DIR/../qpkg/shared/prewire_beam_box"
+# 设备侧 POSIX 子集（上游镜像，**勿手改**）：预接线脚本在设备上是 busybox ash
+#   跑的 ⇒ 自测也必须用 POSIX sh 跑它。
+# ⚠️ **必须显式指路径**：负对照会把脚本**复制到临时目录**再跑 ⇒ 脚本按「同目录」
+#   探测就找不到库 ⇒ 直接早退（提示「缺 shellkit POSIX 子集」）
+#   ⇒ 负对照会误判成「变异无效」（判据失牙齿）⇒ 这里给绝对路径。
+POSIX_LIB="$SCRIPT_DIR/../qpkg/shared/shellkit-posix.sh"
 
 fails=0
 # 判据输出：shellkit 日志（stderr）；**判定逻辑一个字未改**。
@@ -183,7 +194,8 @@ run_prewire() { # <脚本路径> → 退出码
     PB_DATA_PATH="$DATA" \
     PB_ADMIN_PASSWORD=admin123 \
     PB_PREWIRE_WAIT_MAX="${PB_PREWIRE_WAIT_MAX:-30}" \
-    bash "$1" >/dev/null 2>&1
+    PB_SHELLKIT_POSIX="$POSIX_LIB" \
+    sh "$1" >/dev/null 2>&1
 }
 
 state_get() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$STATE" "$1" 2>/dev/null; }
@@ -324,7 +336,8 @@ log_info "── 判据 ⑥：登录 401 ⇒ 提示点名 .env 口令已过期"
 rm -f "$DATA/.beam_box_api_key"
 curl -s -m 5 -X POST "http://127.0.0.1:${BOX_PORT}/__invalidate" >/dev/null 2>&1
 OUT6="$(PB_SERVER_PORT="$BOX_PORT" PB_P2PCWEB_PORT="$BEAM_PORT" PB_DATA_PATH="$DATA" \
-  PB_ADMIN_PASSWORD=wrong-pass PB_PREWIRE_WAIT_MAX=10 bash "$PREWIRE" 2>&1)"
+  PB_ADMIN_PASSWORD=wrong-pass PB_PREWIRE_WAIT_MAX=10 PB_SHELLKIT_POSIX="$POSIX_LIB" \
+  sh "$PREWIRE" 2>&1)"
 if printf '%s' "$OUT6" | grep -q '口令已过期'; then
   note_ok "登录失败提示点名「.env 口令已过期」"
 else
@@ -338,7 +351,8 @@ sed 's|⇒ .env 口令已过期（PB_ADMIN_PASSWORD 与库中口令不符）||' 
 rm -f "$DATA/.beam_box_api_key"
 curl -s -m 5 -X POST "http://127.0.0.1:${BOX_PORT}/__invalidate" >/dev/null 2>&1
 OUTD="$(PB_SERVER_PORT="$BOX_PORT" PB_P2PCWEB_PORT="$BEAM_PORT" PB_DATA_PATH="$DATA" \
-  PB_ADMIN_PASSWORD=wrong-pass PB_PREWIRE_WAIT_MAX=10 bash "$BAD4" 2>&1)"
+  PB_ADMIN_PASSWORD=wrong-pass PB_PREWIRE_WAIT_MAX=10 PB_SHELLKIT_POSIX="$POSIX_LIB" \
+  sh "$BAD4" 2>&1)"
 if printf '%s' "$OUTD" | grep -q '口令已过期'; then
   note_fail "坏副本仍出现新文案 ⇒ 变异无效，判据 ⑥ 无牙齿"
 else

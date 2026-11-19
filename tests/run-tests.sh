@@ -370,6 +370,11 @@ sh qpkg/shared/pigeonbox.sh stop >/dev/null 2>&1
 
 echo "── Q10 卸载钩子字符串按 source 时变量展开(具体路径;最后跑,钩内 unset 清场)"
 cp qpkg/shared/pigeonbox.sh "$PKGROOT/pigeonbox.sh"
+# ⚠️ 2026-11-19（设备侧 POSIX 化）：包根现在还要带 **shellkit POSIX 子集**
+#   （shared/ 被 QDK 平铺到包根 ⇒ 装机后库与脚本同在包根）。
+#   服务脚本缺它 ⇒ fail-closed 退 5 ⇒ 卸载钩子停不了服（真机症状：卸不掉还在跑）。
+#   ⇒ 这里把库一起搬进夹具的包根（**只补布置，不改断言**）。
+cp qpkg/shared/shellkit-posix.sh "$PKGROOT/shellkit-posix.sh"
 chmod +x "$PKGROOT/pigeonbox.sh"
 # 先起一组进程供卸载停服
 sh qpkg/shared/pigeonbox.sh start
