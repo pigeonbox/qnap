@@ -22,7 +22,11 @@ jobs:
         #   scripts/check-shellkit-vendor.sh 的逐字对账负责）⇒ 不进扫描射程。
         #   设备侧脚本（qpkg/shared/pigeonbox.sh）按 POSIX sh 口径扫，不引 shellkit。
         run: |
-          shellcheck qpkg/shared/pigeonbox.sh tests/run-tests.sh \
+          # ⚠️ prewire_beam_box **无 .sh 后缀** ⇒ 任何 '*.sh' 通配都扫不到它
+          #   ⇒ 显式点名（它恰恰是出事最多的那个：出厂预接线两次静默空跑，
+          #   openwrt#215 / qnap#204 ⇒ 改坏了 CI 却不报）。
+          shellcheck qpkg/shared/pigeonbox.sh qpkg/shared/prewire_beam_box \
+            tests/run-tests.sh \
             scripts/build-native.sh scripts/build-qpkg.sh \
             scripts/check-pb-in-qpkg.sh scripts/prewire-beam-box-selftest.sh
       - name: 原生形态守卫(不得回退 Docker/compose 面)
@@ -200,6 +204,13 @@ jobs:
           tar -tzf /tmp/data.tar.gz | grep -q 'bin/pigeonbox-linux-'
           tar -tzf /tmp/data.tar.gz | grep -q '^\./www/index\.html$'
           tar -tzf /tmp/data.tar.gz | grep -q '^\./pigeonbox\.sh$'
+          # ⚠️ 预接线脚本 + POSIX 子集**必须在包根**（2026-11-19 补）：
+          #   缺 prewire_beam_box ⇒ 每次启动都被 "script missing, skip" 掉（静默空跑）
+          #   缺 shellkit-posix.sh ⇒ 装载段 fail-closed 退 5 ⇒ 服务根本起不来
+          #   ⇒ 两者都是「装机即挂 / 静默失效」，必须在**产物**层面断言
+          #     （打包期断言只挡到暂存区，挡不住 QDK 平铺时漏掉）。
+          tar -tzf /tmp/data.tar.gz | grep -q '^\./prewire_beam_box$'
+          tar -tzf /tmp/data.tar.gz | grep -q '^\./shellkit-posix\.sh$'
           tar -tzf /tmp/data.tar.gz | grep -q '^\./env\.example$'
           tar -tzf /tmp/data.tar.gz | grep -q '^\./\.qpkg_icon\.gif$'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
