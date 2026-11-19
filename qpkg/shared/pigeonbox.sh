@@ -35,6 +35,41 @@ LOG_FILE="${APP_DIR}/pigeonbox.log"
 PID_FILE="${APP_DIR}/pigeonbox.pid"
 WATCHDOG_PID_FILE="${APP_DIR}/.watchdog_pid"
 
+# ── shellkit POSIX 子集（设备侧唯一可用的 shellkit 形态）──────────────────
+#   上游 shellkit 主库是 bash 3.2+ 基线（数组/mapfile/[[ ]]/printf -v）⇒
+#   busybox ash **根本解析不了** ⇒ 上一轮改造里设备侧脚本一律零改动。
+#   现在上游交付了纯 POSIX 的子集（lib/posix/shellkit-posix.sh）⇒ 这里只用
+#   「建目录」这一小撮能力（fs_ensure_dir），其余手写全部保留（见下方注释）。
+#   落点探测：① 环境变量 ② 脚本同目录 ③ 同目录 lib/ ④ 通用安装路径
+#            ⑤ **QPKG 包根**
+#   ⚠️ ⑤ 是 QTS 专属的、**不能省**：QTS 把服务脚本**软链**到 /etc/init.d/
+#      ⇒ dirname "$0" 指向 /etc/init.d，不是包根 ⇒ 只探 ①②③④ 必然落空
+#      ⇒ 装机即挂（fail-closed 退 5 ⇒ 服务永远起不来）。
+#      包根能命中是因为 QDK 把 shared/ 平铺到包根（库与脚本同在包根）。
+#   ⚠️ **fail-closed**：库在而脚本不在 ⇒ 装的是不完整的包 ⇒ 响亮失败退 5，
+#      不静默半工作（设备侧改错 = 装机即挂 ⇒ 宁可直接失败，也不要带病运行）。
+_sk_dir="$(dirname "$0")"
+_sk_lib=""
+for _sk_c in \
+    "${PB_SHELLKIT_POSIX:-}" \
+    "${_sk_dir}/shellkit-posix.sh" \
+    "${_sk_dir}/lib/shellkit-posix.sh" \
+    "/usr/lib/pigeonbox/shellkit-posix.sh" \
+    "${QPKG_ROOT}/shellkit-posix.sh"
+do
+    if [ -n "$_sk_c" ] && [ -r "$_sk_c" ]; then _sk_lib="$_sk_c"; break; fi
+done
+if [ -z "$_sk_lib" ]; then
+    echo "缺 shellkit POSIX 子集（装的是不完整的包）" >&2
+    exit 5
+fi
+# 路径是运行时探测出来的 ⇒ shellcheck 静态追不动，显式声明不追
+# shellcheck source=/dev/null
+. "$_sk_lib"
+# 归一成**绝对路径**再导出：子进程（预接线脚本）按各自 cwd 解析相对路径会找不到
+_sk_lib="$(cd "$(dirname "$_sk_lib")" && pwd)/$(basename "$_sk_lib")"
+export PB_SHELLKIT_POSIX="$_sk_lib"
+
 # 按架构选二进制(build-native.sh 产出的静态链接文件)
 case "$(uname -m)" in
     x86_64)          BIN="${QPKG_ROOT}/bin/pigeonbox-linux-amd64"
@@ -61,10 +96,17 @@ HEALTH_WAIT_MAX="${HEALTH_WAIT_MAX:-10}"
 WATCHDOG_INTERVAL="${WATCHDOG_INTERVAL:-30}"
 WATCHDOG_THRESHOLD=3
 
+# ⚠️ **保留手写**（2026-11-19 设备侧 POSIX 化）：本函数写的是**日志文件**
+#   （${LOG_FILE}），而 shellkit POSIX 子集的 log_* 一律写 **stderr**
+#   ⇒ **不是等价替换**（换了会把服务日志的时间戳行变成 stderr 噪声，
+#   且 QPKG 的日志采集看不到）⇒ 继续手写。
 log_msg() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >>"${LOG_FILE}" 2>/dev/null || true
 }
 
+# ⚠️ **保留手写**（2026-11-19 设备侧 POSIX 化）：POSIX 子集**没有**探活能力
+#   （net_wait_port / net_wait_http 都不在子集里；proc_* 明确不进子集，
+#   见上游 issue #162）⇒ 探活逻辑保持原样。
 # /ping 探活:curl 优先,QTS 老版本回退 busybox wget
 probe() {
     if command -v curl >/dev/null 2>&1; then
@@ -74,6 +116,7 @@ probe() {
     fi
 }
 
+# ⚠️ **保留手写**（2026-11-19 设备侧 POSIX 化）：POSIX 子集无日志轮转能力 ⇒ 保持原样。
 # app.log 轮转:超 10MB 截尾保留最近 1MB(对齐 fnos cmd/main,防无限增长)
 rotate_log() {
     [ -f "${LOG_FILE}" ] || return 0
@@ -116,7 +159,10 @@ prepare_env() {
     # /setup 才能认领 —— 后者暴露面小得多。
     # 已有实例零副作用: core 的 CreateDefaultAdmin 见到已有管理员直接返回。
     [ -z "${PB_ADMIN_PASSWORD}" ] && export PB_DISABLE_DEFAULT_ADMIN=true
-    mkdir -p "${PB_DATA_PATH}"
+    # 建目录交给 shellkit POSIX 子集的 fs_ensure_dir（已存在即成功 ⇒ 与 mkdir -p
+    # 等价；建父目录同款）。失败**不改退出码语义**：本脚本无 set -e，
+    # 起不来由看门狗兜底 ⇒ 只记日志。
+    fs_ensure_dir "${PB_DATA_PATH}" || log_msg "failed to create data dir: ${PB_DATA_PATH}"
 }
 
 launch() {
@@ -131,6 +177,9 @@ launch() {
     printf "%s" "$!" >"${PID_FILE}"
 }
 
+# ⚠️ **保留手写**（2026-11-19 设备侧 POSIX 化）：POSIX 子集**没有**看门狗能力
+#   （proc_* 明确不进子集，见上游 issue #162：进程存活判定/优雅停机都没有对应件）
+#   ⇒ 整段保持原样（含与 fnos cmd/main 的同构关系，见下方「双胞胎警示」）。
 # 看门狗自愈循环(由 start_process 后台拉起,继承环境;语义对齐 fnos cmd/main):
 #   每个周期探活;进程消失(崩溃/被杀)直接重新拉起;/ping 连续 3 次失败重启进程。
 # 终止条件:stop 先杀看门狗再杀 server,不会与正常停机竞态。
@@ -213,14 +262,28 @@ start_p2pcweb() {
 # API Key 预置进 p2pcweb ⇒ 用户打开 Beam 的「文件柜」tab **不再需要手填**。
 # 失败**不阻断**(优雅降级):Beam 退化为「手填」旧行为,Box 照常可用。
 prewire_beam_box() {
-    _prewire_script="$(cd "$(dirname "$0")" && pwd)/prewire_beam_box"
+    # ⚠️ 落点（2026-11-19，qnap#204 的另一半）：QTS 把服务脚本**软链**到
+    #   /etc/init.d/ ⇒ dirname "$0" 指向 /etc/init.d，不是包根 ⇒ 同目录探测
+    #   必然落空 ⇒ 预接线每次都被 skip（真机表现＝「装完仍得手填」）。
+    #   ⇒ 主用包根（QDK 把 shared/ 平铺到包根），同目录仅作仓内/兜底。
+    _prewire_script="${QPKG_ROOT}/prewire_beam_box"
+    if [ ! -f "$_prewire_script" ]; then
+        _prewire_script="$(cd "$(dirname "$0")" && pwd)/prewire_beam_box"
+    fi
     if [ ! -f "$_prewire_script" ]; then
         log_msg "beam prewire: script missing, skip"
         return 0
     fi
+    # 打包链路不保证保留执行位,启动前兜底(与 launch() 同款：文件属 root,可 chmod)
+    chmod +x "$_prewire_script" 2>/dev/null || true
     # ⚠️ **后台执行**:脚本自己会等 Box / p2pcweb 就绪(最多 30s)
     #   ⇒ 前台调用会把包启动**阻塞** ⇒ 极端情况下触发 QPKG 启动超时。
-    nohup bash "$_prewire_script" >>"${LOG_FILE}" 2>&1 &
+    # ⚠️ qnap#204（2026-11-19 修）：原为 `nohup bash "$_prewire_script"`
+    #   ⇒ **QTS 上没有 bash** ⇒ nohup 找不到解释器 ⇒ 子进程根本没起来
+    #   ⇒ 预接线静默空跑（真机表现＝「装完仍得手填」）。
+    #   ⇒ 预接线脚本本身已是 POSIX sh（busybox ash 可执行）⇒ 直接执行它。
+    #   PB_SHELLKIT_POSIX 已在上方装载段导出 ⇒ 子进程能定位 POSIX 子集。
+    nohup "$_prewire_script" >>"${LOG_FILE}" 2>&1 &
     log_msg "beam prewire: started (background; waits for Box + p2pcweb readiness)"
     return 0
 }
@@ -325,13 +388,18 @@ stop_process() {
     return 0
 }
 
+# ⚠️ **退出码是对外契约**（2026-11-19 设备侧 POSIX 化）：status 退 0/3 是
+#   QTS/LSF 语义（0=运行中,3=未运行），start/stop/restart 退 0=成功 ⇒ 一律不改。
+#   （POSIX 子集的 die/fail 是「消息在前、退出码在后」、与 bash 版相反，
+#     本脚本**不引**它们改退出码 ⇒ 只在上方装载段用到 fs_ensure_dir。）
 case "$1" in
     start)
         # App Center 停用状态不启动
         if [ "$("$GETCFG" "$QPKG_NAME" Enable -u -d FALSE -f "$QPKG_CONF" 2>/dev/null)" != "TRUE" ]; then
             exit 0
         fi
-        mkdir -p "$APP_DIR"
+        # 建目录交给 shellkit POSIX 子集的 fs_ensure_dir（已存在即成功 ⇒ 与 mkdir -p 等价）
+        fs_ensure_dir "$APP_DIR" || log_msg "failed to create app dir: ${APP_DIR}"
         # 开机时存储卷/网络晚于本脚本就绪的竞态:setsid 后台引导,不阻塞 rcS
         # (App Center 会杀阻塞在启动流程里的进程组)
         if command -v setsid >/dev/null 2>&1; then
